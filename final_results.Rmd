@@ -1,0 +1,2676 @@
+---
+title: "Essential Proteins"
+output: 
+  html_document:
+    self_contained: false
+    toc: true
+    toc_float: true  
+---
+
+```{r libraries, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', collapse=TRUE}
+library(readxl)
+library(readr)
+library(here)
+library(dplyr)
+library(fuzzyjoin)
+library(tidyr)
+library(stringr)
+library(psych)
+library(knitr)
+library(ggplot2)
+library(patchwork)
+library(purrr)
+library(writexl)
+library(kableExtra)
+library(DT)
+library(broom)
+library(htmltools)
+library(plotly)
+
+library(rJava)
+library(tabulapdf)
+library(shiny)
+library(miniUI)
+```
+
+# 1. Baseline data
+
+```{r data_1, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+baseline_data = read_xlsx(here("24hr_recall_baseline_data_ESSENTIALS_SAMPLE_DATA_03092025.xlsx")) |>
+  rename(home_protein_consumption = `home protein consumption`)
+original_cols = names(baseline_data)
+
+baseline_data = baseline_data |>
+  mutate(
+    child_age = round(child_age, 1),
+    animal_protein_presence = ifelse(stringr::str_detect(ingredient_name, "milk|beef|eggs|fish"), "animal based", "plant based"), # assign protein type i.e milk|beef|eggs|fish as animal and the rest as plant
+  )  |>
+  distinct() # removed duplicate records from the raw data
+nrow(baseline_data)
+```
+
+
+## (a) Clean Ingredient Names in Baseline Data
+
+### Where ingredient_names was given as *githeri*, split the row into 2 rows i.e *maize* and *beans*
+
+```{r clean_ingredient_names_githeri, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+split_githeri_rows = function(df, divide_cols) {
+  # Filter rows containing "githeri"
+  githeri_rows = df |> filter(grepl("githeri", ingredient_name))
+  
+  # Check for the existence of divide_cols in githeri_rows
+  existing_divide_cols = intersect(divide_cols, colnames(githeri_rows))
+  
+  # Create the new rows for maize and beans with divided values
+  maize_bean_rows = githeri_rows |>
+    select(all_of(existing_divide_cols), ingredient_name) |>
+    mutate(across(all_of(existing_divide_cols), ~ . / 2)) |>
+    mutate(ingredient_name = "maize grain",
+           ingredient_name = "maize grain") |>
+    bind_rows(
+      githeri_rows |>
+        select(all_of(existing_divide_cols), ingredient_name) |>
+        mutate(across(all_of(existing_divide_cols), ~ . / 2),
+               across(!all_of(existing_divide_cols), ~ . )) |>
+        mutate(ingredient_name = "beans",
+               ingredient_name = "beans")
+    )
+  
+  # Remove original githeri rows
+  df = df |> filter(!str_detect(ingredient_name, "githeri"))
+  
+  # Combine the original dataframe with the new rows
+  df = bind_rows(df, maize_bean_rows)
+  
+  return(df)
+}
+
+divide_cols = names(baseline_data)[str_detect(names(baseline_data), "volume_cooked|volume_consumed|i_volume|volume_calc")]
+
+baseline_data = split_githeri_rows(baseline_data, divide_cols)
+nrow(baseline_data)
+```
+
+
+
+### Add age_group and Clean Ingredient Names in Baseline Data
+
+```{r clean_ingredient_names, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# Add age groups
+baseline_data = baseline_data |>
+  mutate(
+    # create the appropriate age groups
+    child_age = child_age |> as.numeric(),
+    age_group = case_when(
+      child_age < 7 ~ "4-<7",
+      child_age >= 7 & child_age < 10 ~ "7-<10",
+      child_age >= 10 & child_age < 13 ~ "10-<13",
+      child_age >= 13 ~ "13+",
+      TRUE ~ NA_character_  # Handle any ages outside the specified ranges
+    ) |> 
+      factor(levels = c("4-<7", "7-<10", "10-<13", "13+")),)
+
+# For baseline_data - create TWO different cleaned columns
+# baseline_data <- baseline_data %>%
+#   mutate(
+#     ingredient_name_simplified_digestibility = sapply(ingredient_name, clean_for_digestibility),
+#     ingredient_name_simplified_AA = sapply(ingredient_name, clean_for_amino_acids)
+#   )
+
+# # baseline data
+baseline_data = baseline_data |>
+  mutate(
+    ingredient_name_simplified = ingredient_name,
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "bread") ~ "wheat bread",
+      TRUE ~ ingredient_name_simplified), # Retain existing value if it's not missing
+    
+    
+    ingredient_name_simplified = gsub("boiled", "", ingredient_name_simplified), # this was being confused with "oil" when fuzzy matching
+    
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "(milk).*(cow).*fermented") ~ "mursik",  # Replace if "fermented cow milk"
+      stringr::str_detect(ingredient_name_simplified, "yoghurt") ~ "yoghurt",
+      stringr::str_detect(ingredient_name_simplified, "mursik") ~ "mursik",
+      stringr::str_detect(ingredient_name_simplified, "(milk).*cow") ~ "milk cow",  # Replace if "cow milk"
+      stringr::str_detect(ingredient_name_simplified, "(milk).*camel") ~ "milk camel",  # Replace if "camel milk"
+      stringr::str_detect(ingredient_name_simplified, "(milk).*goat") ~ "milk goat",  # Replace if "goat milk"
+      stringr::str_detect(ingredient_name_simplified, "milk|cow milk") ~ "milk cow",  # Replace if "liver" is found
+      TRUE ~ ingredient_name_simplified),  # Retain the original value if no match
+    
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "oil |cooking fat|o l|oil,"), "oil", ingredient_name_simplified), # replace everything that contains oil to "oil"
+    
+    ingredient_name_simplified = case_when(
+      
+      stringr::str_detect(ingredient_name_simplified, "(beans|bean).*french") ~ "beans french",  # Replace if "beans french"
+      stringr::str_detect(ingredient_name_simplified, "(beans|bean).*yellow") ~ "beans yellow",  # Replace if "beans french"
+      stringr::str_detect(ingredient_name_simplified, "(beans|bean).*red") ~ "beans red",  # Replace if "beans french"
+      stringr::str_detect(ingredient_name_simplified, "beans|bean|geans dried") ~ "beans",  # Replace if "beans"
+      
+      stringr::str_detect(ingredient_name_simplified, "pepper") ~ "pilipili",  
+      
+      TRUE ~ ingredient_name_simplified),  # Retain the original value if no match
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "arrow root|arrowroot|nduma"), "arrowroot", ingredient_name_simplified), # replace everything that contains arrow root to "arrow root"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "banana|matoke"), "banana", ingredient_name_simplified), # replace everything that contains banana to "banana"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "cabbage"), "cabbage", ingredient_name_simplified), # replace everything that contains cabbage to "cabbage"
+    
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "royco|royce|roycal|jumbo|roycube|maggie cube|onga beef") ~ "royco",  # Replace if "royco"
+      stringr::str_detect(ingredient_name_simplified, "(cube).*beef") ~ "royco",
+      TRUE ~ ingredient_name_simplified),  # Retain the original value if no match
+    
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "liver|smokie|samosa") ~ "beef liver",  # Replace if "liver" is found
+      stringr::str_detect(ingredient_name_simplified, "(beef|cow).*lean") ~ "beef lean",  # Replace if "beef" or "cow" followed by "lean"
+      stringr::str_detect(ingredient_name_simplified, "(beef|cow).*medium fat") ~ "beef medium",  # Replace if "medium fat beef"
+      stringr::str_detect(ingredient_name_simplified, "(beef|cow).*high fat") ~ "beef high",  # Replace if "medium fat beef"
+      stringr::str_detect(ingredient_name_simplified, "(beef|cow).*low fat") ~ "beef low",  # Replace if "medium fat beef"
+      stringr::str_detect(ingredient_name_simplified, "beef|meat") ~ "beef",  # Replace if "beef" or "meat" is found
+      TRUE ~ ingredient_name_simplified),  # Retain the original value if no match
+    
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "capsicum|hoho"), "capsicum", ingredient_name_simplified), # replace everything that contains capsicum to "capsicum",
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "carrot"), "carrots", ingredient_name_simplified), # replace everything that contains carrot to "carrots"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "coriander|corriander|dhania|dhani"), "dhania", ingredient_name_simplified), # replace everything that contains capsicum to "capsicum"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "managu|kienyeji green|nightshade|mrenda|kunde"), "blacknightshade", ingredient_name_simplified), # replace everything that contains managu to "managu"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "chocolate|choco|cocoa|milo"), "chocolate", ingredient_name_simplified), # replace everything that contains chocolate to "chocolate"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "coconut"), "coconut", ingredient_name_simplified), # replace everything that contains coconut
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "egg"), "eggs", ingredient_name_simplified), # replace everything that contains egg to "eggs"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "omena|dagaa"), "omena", ingredient_name_simplified), # replace everything that contains omena to "omena"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "sardine|sardines"), "sardine", ingredient_name_simplified), # replace everything that contains omena to "omena"
+    
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "fish") ~ "tilapia",
+      stringr::str_detect(ingredient_name_simplified, "(nile).*perch") ~ "nile perch",
+      stringr::str_detect(ingredient_name_simplified, "mbuta") ~ "nile perch",
+      stringr::str_detect(ingredient_name_simplified, "tilapia") ~ "tilapia",
+      TRUE ~ ingredient_name_simplified),  # Retain existing value if none of the conditions are met
+    
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "pilau masala") ~ "masala",
+      stringr::str_detect(ingredient_name_simplified, "(rice).*white") ~ "rice white",
+      stringr::str_detect(ingredient_name_simplified, "(rice).*brown") ~ "rice brown",
+      stringr::str_detect(ingredient_name_simplified, "rice|pilau") ~ "rice",
+      TRUE ~ ingredient_name_simplified),  # Retain existing value if none of the conditions are met
+    
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "garlic"), "garlic", ingredient_name_simplified), # replace everything that contains garlic to "garlic"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "ginger|saumu"), "ginger", ingredient_name_simplified), # replace everything that contains ginger to "ginger"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "potato"), "potato", ingredient_name_simplified), # replace everything that contains potato to "potato"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "onion|onions"), "onion", ingredient_name_simplified), # replace everything that contains onion to "onion"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "salt"), "salt", ingredient_name_simplified), # replace everything that contains salt to "salt"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "sugar"), "sugar", ingredient_name_simplified), # replace everything that contains sugar to "sugar"
+    
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "(tea).*masala") ~ "masala",
+      
+      stringr::str_detect(ingredient_name_simplified, "(tea).*white") ~ "tea white",
+      stringr::str_detect(ingredient_name_simplified, "(tea).*black") ~ "tea black",
+      stringr::str_detect(ingredient_name_simplified, "tea") ~ "tea",
+      TRUE ~ ingredient_name_simplified),  # Retain existing value if none of the conditions are met
+    
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "tomato|toma"), "tomato", ingredient_name_simplified), # replace everything that contains tomato to "tomato"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "spinach"), "spinach", ingredient_name_simplified), # replace everything that contains spinach to "spinach"
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "soy|sossi"), "soy flour", ingredient_name_simplified), # replace everything that contains sossi to "spinach"
+    
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "(sukuma|sukjma|kales|green fresh without stalks|kanjera|kansela).*ethiopia") ~ "ethiopian kales",
+      stringr::str_detect(ingredient_name_simplified, "sukuma|sukjma|kales|green fresh without stalks|kanjera|kansela") ~ "kales",
+      TRUE ~ ingredient_name_simplified),  # Retain the original value if no match
+    
+    
+    # ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "tea|teleaves"), "tea", ingredient_name_simplified), # replace everything that contains tea to "tea"
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "watermellon|watermelon|melon"), "watermellon", ingredient_name_simplified), # replace everything that contains watermellon to "watermelon"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "pumpkin leaves"), "pumpkin leaves", ingredient_name_simplified), # replace everything that contains pumpkin leaves to "pumpkin leaves"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "pumpkin yellow"), "pumpkin", ingredient_name_simplified), # replace everything that contains pumkin yellow to "pumpkin"
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "wimbi|millet|ugali brown|composite|mixed flour|porridge|uji"), "millet", ingredient_name_simplified), # replace everything that contains wimbi | millet | composite|mixed flour to "millet"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "sorghum"), "sorghum", ingredient_name_simplified), # replace everything that contains sorghum to "sorghum"
+    
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "kunde|mitoo"), "kunde", ingredient_name_simplified), # replace everything that contains kunde to "kunde"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "terere|there"), "terere", ingredient_name_simplified), # replace everything that contains terere to "terere"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "sagaa|saga"), "sagaa", ingredient_name_simplified), # replace everything that contains sagaa to "sagaa"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "greens grams|green grams|ndengu|ndegu|baazi green|Gram"), "green gram", ingredient_name_simplified), # replace everything that contains ndengu to "green grams"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "tangawizi"), "tangawizi", ingredient_name_simplified), # replace everything that contains tangawizi to "tangawizi"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "tumeric"), "tumeric", ingredient_name_simplified), # replace everything that contains tumeric to "tumeric"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "curry"), "curry powder", ingredient_name_simplified), # replace everything that contains curry to "curry powder"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "cinamon"), "cinamon", ingredient_name_simplified), # replace everything that contains cinamon to "cinamon"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "baking powder"), "baking powder", ingredient_name_simplified), # replace everything that contains baking powder to "baking powder"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "cassava"), "cassava", ingredient_name_simplified), # replace everything that contains cassava to "cassava"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "indomie|spaghetti|wheat"), "wheat", ingredient_name_simplified), # replace everything that contains indomie to "wheat"
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "ovacado"), "avocado", ingredient_name_simplified), # replace everything that contains avocado
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "orange|squash"), "orange", ingredient_name_simplified), # replace everything that contains orange
+    
+    ingredient_name_simplified = case_when(
+      stringr::str_detect(ingredient_name_simplified, "chickpea|chickpeas|chick peas|njahi") ~ "chick peas",
+      stringr::str_detect(ingredient_name_simplified, "peas * green") ~ "peas",
+      stringr::str_detect(ingredient_name_simplified, "peas") ~ "peas",
+      stringr::str_detect(ingredient_name_simplified, "weetaibix|WEETABIX") ~ "weetabix",
+      TRUE ~ ingredient_name_simplified),  # Retain the original value if no match
+    
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "courgette"), "courgette", ingredient_name_simplified), # replace everything that contains courgette to "courgette"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "chicken"), "chicken", ingredient_name_simplified), # replace everything that contains chicken to "chicken"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "chilli|pepper"), "pepper", ingredient_name_simplified), # replace everything that contains chilli to "pepper"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "coffee"), "coffee", ingredient_name_simplified), # replace everything that contains coffee to "coffee"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "lemon"), "lemon", ingredient_name_simplified), # replace everything that contains lemon to "lemon"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "lentils"), "lentil", ingredient_name_simplified), # replace everything that contains lentils to "lentils"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "margarine|blue band"), "margarine", ingredient_name_simplified), # replace everything that contains margarine to "margarine"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "mrenda"), "mrenda", ingredient_name_simplified), # replace everything that contains mrenda to "mrenda"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "pineapple"), "pineapple", ingredient_name_simplified), # replace everything that contains pineapple tumeric "pineapple"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "tumeric|turmeric"), "tumeric", ingredient_name_simplified), # replace everything that contains tumeric to "margarine"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "rosemary"), "rosemary", ingredient_name_simplified), # replace everything that contains rosemary to "rosemary"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "spaghetti"), "spaghetti", ingredient_name_simplified), # replace everything that contains spaghetti to "spaghetti"
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "sossi"), "sossi", ingredient_name_simplified), # replace everything that contains sossi to "sossi"
+    
+    animal_protein_presence = ifelse(stringr::str_detect(ingredient_name_simplified, "milk|beef|eggs|fish"), "animal based", "plant based"), # assign protein type i.e milk|beef|eggs|fish as animal and the rest as plant
+    ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "water|wate"), "water", ingredient_name_simplified), # replace everything that contains water to "water"
+  ) |>
+  relocate(ingredient_name, ingredient_name_simplified, .before = everything()) |>
+  arrange(ingredient_name_simplified)
+```
+
+### where ingredient is fish, correct bones' volume by multiplying by 0.33
+
+```{r fish_bones, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+baseline_data = baseline_data |>
+  mutate(
+    volume_calc = ifelse(str_detect(ingredient_name_simplified, "tilapia"), volume_calc * 0.33, volume_calc),
+    volume_consumed = (volume_calc * 100))
+```
+
+
+## (c) Check for Double Counted Ingredients 
+
+
+Used columns *participant_id, child_age, child_sex, child_weight, time, food_item_proc_std, ingredient_name_simplified* to check for potential duplicates.
+
+```{r double_counted_ingredients, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', echo=TRUE, cache=FALSE}
+# Extract duplicated rows based on all columns except "ingredient_name"
+repeated_ingredients <- baseline_data |>
+  dplyr::filter(
+    duplicated(across(-ingredient_name)) | 
+      duplicated(across(-ingredient_name), fromLast = TRUE)
+  ) |>
+  mutate(
+    removed = rep(c("duplicate", NA), n()/2)
+  )
+
+repeated_ingredients |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons', 
+            caption = "Frequency of Food items missing ingredients") 
+
+# remove duplicates
+baseline_data = baseline_data |>
+  mutate(
+    ingredient_name = case_when(
+      str_detect(ingredient_name, "cow milk white fresh brookside boiled and not drained") ~ "cow milk white fresh brookside",
+      
+      str_detect(ingredient_name, "cow milk white fresh brookside boiled and not drained") ~ "cow milk white fresh brookside",
+      str_detect(ingredient_name, "milk,cow,fresh") ~ "milk, cow,fresh",
+      str_detect(ingredient_name, "sugar, brown, granulated, mumias") ~ "sugar, brown granulated, mumias",
+      str_detect(ingredient_name, "sugar, brown granulated, mumias") ~ "sugar, brown, granulated, mumias",
+      str_detect(ingredient_name, "tealeaves black eden") ~ "tealeaves eden",
+      str_detect(ingredient_name, "tealeaves,") ~ "tealeaves",
+      str_detect(ingredient_name, "water tap") ~ "water",
+      TRUE ~ ingredient_name
+    )
+  ) |>
+  distinct() 
+
+nrow(baseline_data)
+```
+
+
+- There were `r repeated_ingredients |> select(-"ingredient_name") |> distinct() |> nrow()` duplicated ingredients/records. **These were as a result of an ingredient being recorded twice with different spelling** 
+- The duplicate rows are removed
+
+
+## (d) Check for Double Counted Participants  
+
+```{r double_counted_participants, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+unique_participant_records = baseline_data |> select(participant_id, child_age, child_sex, child_weight, time, food_item_proc_std, ingredient_name_simplified) |> arrange(participant_id, time)
+```
+
+There were `r nrow(baseline_data) - nrow(unique_participant_records)` duplicates
+
+
+# Key mistakes we saw in the Baseline Data
+
+## (a) Outliers in Volume
+
+- We check for outliers based on the `total volume of food item` consumed for a participant
+- $volume\_calc = \frac{volume\ of\ ingredient\ in\ grams}{100}$
+- A food item contains multiple ingredients hence the $total\_food\_volume = \sum (volume\_calc * 100)$
+- Outliers in food volume are `values > 1.5 SD from the median volume of similar food items`
+- The participants identified to have extremely high food volumes (outliers) are removed from the analysis
+
+```{r volume_outliers_1, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', collapse=TRUE, cache=FALSE}
+volumes = baseline_data |>
+  group_by(participant_id, food_item_proc_std, time) |>
+  summarise(
+    total_food_volume = sum(volume_calc * 100)
+  ) |> ungroup() |> distinct()
+```
+
+
+```{r volume_outliers_2, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+outlier_points = volumes |> 
+  group_by(food_item_proc_std) |>
+  summarise(
+    total_food_volume = total_food_volume,
+    Q1 = quantile(total_food_volume, 0.25, na.rm = TRUE),
+    Q3 = quantile(total_food_volume, 0.75, na.rm = TRUE),
+    IQR = Q3 - Q1,
+    lower_bound = Q1 - 1.5 * IQR,
+    upper_bound = Q3 + 1.5 * IQR,
+    `median total_food_volume` = median(total_food_volume, na.rm = TRUE) |> round(2),
+    `sd total_food_volume` = sd(total_food_volume, na.rm = TRUE)  |> round(2),
+    absolute_difference = abs(`total_food_volume` - `median total_food_volume`) |> round(2),
+    `total records` = n(),
+    participant_id = participant_id) |>
+  ungroup() 
+
+outlier_points = outlier_points |>
+  filter(total_food_volume > upper_bound) |> 
+  group_by(food_item_proc_std) |>
+  mutate(
+    `no. of outliers` = n(),
+    `% outliers` = (100 * `no. of outliers` / `total records`) |> round(2)
+  ) |>
+  ungroup() |>
+  select(participant_id, food_item_proc_std, 
+         total_food_volume, `median total_food_volume`, absolute_difference, `sd total_food_volume`,
+         `no. of outliers`, `total records`, `% outliers`) |>
+  distinct()
+
+
+outlier_points |>
+  left_join(
+    baseline_data |>
+      select(participant_id, time, ingredient_name, volume_calc) |>
+      distinct()) |>
+  relocate(ingredient_name, time, volume_calc, .after = food_item_proc_std)  |>
+  arrange(participant_id, food_item_proc_std, time, ingredient_name, volume_calc) |>
+  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Outlier records for Total food volume",) 
+```
+
+- There were `r outlier_points |> nrow()` records (food items) where the total food volume varied significantly from similar food items. 
+- These records were from `r outlier_points$participant_id |> unique() |> length()` participants.
+
+```{r volume_outliers_3, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+outlier_points |> count(participant_id) |> select(n) |> 
+  table() |> as.data.frame() |> rename(`No. of food items with outlier volumes` = n) |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "The number of times perticipants had Outliers in Total food volume") 
+```
+
+### Remove participants with inconsistent food volumes ( > 1.5 SD of median)
+
+```{r remove_volume_outliers, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+baseline_data = baseline_data |>
+  filter(!participant_id %in% outlier_points$participant_id)
+```
+
+
+## (b) Other outliers Observed in `volume_calc` despite the corrections applied above
+
+### ROYCO
+
+- The typical weight of a Royco cube is 4 grams
+- You need 5 cubes to have 20 grams and from experience, this is an extreme amount to use in a meal for multiple persons
+- It is therefore generally extreme to have an individual consume $> 5\ grams$ of royco in a meal
+
+```{r royco, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+royco = baseline_data |>
+  filter(str_detect(ingredient_name_simplified, "royco") & volume_consumed > 5)
+
+royco |>
+  select(participant_id, time, food_item_proc_std, ingredient_name, volume_calc, volume_consumed) |>
+  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Records where individual consumes > 10 grams of Royco in a Meal",) 
+```
+
+
+- This affects `r royco |> nrow()` records from `r royco$participant_id |> unique() |> length()`
+- These participants are also removed
+
+### CORIANDER
+
+- Similarly, coriander is used as a spice in meals and it would be extreme to have $> 50\ grams$ of Coriander in a meal
+
+```{r coriander, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+coriander = baseline_data |>
+  filter(ingredient_name_simplified == "dhania" & volume_consumed > 30)
+
+coriander |>
+  select(participant_id, time, food_item_proc_std, ingredient_name, volume_calc, volume_consumed) |>
+  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Records where individual consumes > 50 grams of Coriander in a Meal",) 
+
+baseline_data = baseline_data |>
+  filter(! participant_id %in% c(royco$participant_id, coriander$participant_id))
+```
+
+- This affects `r coriander |> nrow()` records from `r coriander$participant_id |> unique() |> length()`
+- These participants are also removed
+
+
+## (c) Outliers in %_Protein
+
+
+- We check for outliers in `Protein amounts` based on the `% of protein (g) reported in the ingredient`
+- $\%\_Protein = \frac{Protein\ (g)}{volume_consumed}$ where $volume\_consumed = volume\_calc * 100$
+- Outliers in `%_Protein` are `values above and below 1 SD from the median % protein of similar ingredients prepared in the same method`
+- Ingredients identified to have extreme %_Protein values `(outliers) are replaced with the median %_Protein value for similar ingredients prepared with the same method`
+- The corrected protein amounts for the ingredient are recalculated as the $protein\_perc\_corrected\ *\ volume\_consumed$
+
+### Create column for `%_Protein` i.e 100 * `Protein (g)` / `volume_consumed` 
+
+```{r perc_protein, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+baseline_data = baseline_data |>
+  mutate(
+    `%_Protein` = (100 * `Protein (g)` / volume_consumed) |> round(2)
+  )
+```
+
+
+### Outliers in `%_Protein` (based on both ingredient and food prep method) ( %_Protein < - 1 SD  | %_Protein > 1 SD)
+
+
+```{r perc_protein_outliers_1, message=FALSE, warning=FALSE, echo=TRUE, cache=FALSE, collapse=TRUE, results='asis'}
+# Calculate summary statistics and remove outliers
+baseline_data = baseline_data |>
+  group_by(ingredient_name_simplified, food_prep_methos) |>
+  summarise(Q1 = quantile(`%_Protein`, 0.25, na.rm = TRUE),
+         Q3 = quantile(`%_Protein`, 0.75, na.rm = TRUE),
+         IQR = Q3 - Q1,
+         lower_bound = Q1 - 1.0 * IQR,
+         upper_bound = Q3 + 1.0 * IQR,
+         `median %_Protein` = median(`%_Protein`, na.rm = TRUE) |> round(2),
+         `sd %_Protein` = sd(`%_Protein`, na.rm = TRUE) |> round(2),
+         absolute_difference = abs(`%_Protein` - `median %_Protein`) |> round(2),
+         `total records` = n(),
+         participant_id = participant_id) |>
+  ungroup() |> distinct() |>
+  right_join(baseline_data, by = NULL)
+
+outlier_points = baseline_data |>
+  filter( `%_Protein` > upper_bound) |> # `%_Protein` < lower_bound |
+  group_by(ingredient_name_simplified, food_prep_methos) |>
+  mutate(
+    `no. of outliers` = n(),
+    `% outliers` = (100 * `no. of outliers` / `total records`) |> round(2)
+  ) |> ungroup() |>
+  select(participant_id, time, food_item_proc_std, ingredient_name, ingredient_name_simplified, 
+         food_prep_methos, `%_Protein`, `median %_Protein`, absolute_difference, `sd %_Protein`, `no. of outliers`, 
+         `total records`, `% outliers`)  |>
+  distinct() |>
+  arrange(desc(absolute_difference))
+
+outlier_points |>
+  left_join(
+    baseline_data |>
+      select(participant_id, time, food_item_proc_std, ingredient_name, ingredient_name_simplified, food_prep_methos, `Protein (g)`, volume_calc) |>
+      distinct(), by = NULL) |>
+  filter(!is.na(participant_id)) |>
+  relocate(`Protein (g)`, volume_calc, .before = `%_Protein`) |>
+  arrange(participant_id, time, food_item_proc_std, desc(`Protein (g)`)) |>
+  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Outlier records for %_Protein variable",) 
+```
+
+
+There are `r nrow(outlier_points)` outlier points affecting `r outlier_points$participant_id |> unique() |> length()` participants.
+
+
+### Create `protein_perc_corrected` by replacing outliers in `%_protein` with median
+
+```{r perc_protein_outliers_2, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# Calculate summary statistics and remove outliers
+baseline_data = baseline_data |>
+  mutate(
+    protein_perc_corrected = ifelse(
+      `%_Protein` > upper_bound, # `%_Protein` < lower_bound |
+      `median %_Protein`,
+      `%_Protein`
+    )
+  )
+```
+
+### Recalculate protein amount from `protein_perc_corrected` to create `Protein (g)_corrected` 
+
+- calculated as $Protein\ (g)\_corrected = protein\_perc\_corrected * volume\_consumed$) 
+- outliers in `Protein (g)` are replaced with the recalculated value
+
+```{r new_variables_2, message=FALSE, warning=FALSE, echo=TRUE, cache=FALSE, collapse=TRUE, results='asis'}
+baseline_data = baseline_data |>
+  mutate(
+    `Protein (g)_corrected` = (protein_perc_corrected / 100) * volume_consumed # i.e (volume_calc * 100)
+  ) |> relocate(`Protein (g)_corrected`, .after = `Protein (g)`)
+```
+
+### NOTE: PROTEINS IN TEA (PROTEIN IN TEA ~ 20% CONFIRMED NOT TO BE TOO HIGH)
+
+All individuals' *% Protein for tea > 18%*. CONFIRMED TO BE OK AND NOT REMOVED.
+
+```{r}
+tea = baseline_data |> 
+  select(participant_id, food_recipe_name, ingredient_name, ingredient_name_simplified, food_prep_methos, time, volume_cooked, volume_calc, `Protein (g)`,
+         `%_Protein`, `median %_Protein`, `sd %_Protein`, `Protein (g)_corrected`, protein_perc_corrected) |> filter(str_detect(ingredient_name_simplified, "tea")) 
+tea |> datatable(options = list(pageLength = 15, scrollX = TRUE,dom = 'Bfrtip'), filter = 'top',    extensions = 'Buttons', caption = "Protein Recorded in Tea")
+```
+
+To remove the participants with the ingredient tea would mean removing 237 participants which would leave a small sample of 81 participants (i.e those who had no ingredient tea in their diet). I instead removed tea from all participants and redid the analysis without it.
+
+### NOTE: PROTEINS IN GINGER 
+
+All individuals' *% Protein for Ginger > 5% with median = 6.79% for boiled drained, 7.26% for stewed and 20% for boiled not drained*. My observation is that the protein (g) in ingredient_name ginger were misrepresented. This explains why even when correcting to the median, the replacement value is still > 18%. 
+
+```{r}
+ginger = baseline_data |> 
+  select(participant_id, food_recipe_name, ingredient_name, ingredient_name_simplified, food_prep_methos, time, volume_cooked, volume_calc, `Protein (g)`,
+         `%_Protein`, `median %_Protein`, `sd %_Protein`, `Protein (g)_corrected`, protein_perc_corrected) |> filter(str_detect(ingredient_name_simplified, "ginger")) 
+ginger |> datatable(options = list(pageLength = 15, scrollX = TRUE,dom = 'Bfrtip'), filter = 'top',    extensions = 'Buttons', caption = "Protein Recorded in Ginger")
+```
+
+```{r}
+# Filter out rows with "tea" in ingredient_name_simplified
+baseline_data = baseline_data |>
+  filter(!stringr::str_detect(ingredient_name_simplified, regex("ginger", ignore_case = TRUE))) 
+```
+
+
+####	Distribution of grams of protein (corrected) `in ingredients`
+
+```{r protein_g, message=FALSE, warning=FALSE, echo=TRUE, cache=FALSE, collapse=TRUE, results='asis'}
+# Visualize the results
+p = ggplot(baseline_data, aes(x = `Protein (g)_corrected`)) +
+  geom_histogram(aes(y = after_stat(count)/sum(after_stat(count)) * 100),
+                 fill = "lightblue", 
+                 color = "black", binwidth = 2) +
+  theme_minimal() +
+  ggtitle("Distribution of corrected protein (g) values"  |> str_wrap()) +
+  xlab("Protein (g)") + ylab("Percentage") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), plot.title = element_text(size = 10))   # Angle x-axis tick labels at 90 degrees
+
+# Convert ggplot object to plotly object
+plotly_obj = ggplotly(p)
+
+# Define HTML output
+html_output = tagList(
+  tags$div(plotly_obj, style = "margin:5px;")
+)
+# Print the Plotly object as an HTML output
+browsable(html_output)
+
+baseline_data |>
+  mutate(`protein (g)_corrected range` = cut(`Protein (g)_corrected`, 
+                                             breaks = seq(0, ceiling(max(`Protein (g)_corrected`, na.rm = TRUE)/10)*10, by = 5),
+                                             include.lowest = TRUE,
+                                             right = TRUE)) |>
+  count(`protein (g)_corrected range`) |>
+  summarise(
+    `protein (g)_corrected range` = `protein (g)_corrected range`,
+    Frequency = n, `percent of population` = (100 * n / sum(n)) |> round(2)
+  ) |> ungroup() |>
+  datatable(options = list(pageLength = 20, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Distribution of grams of protein (corrected) `in ingredients`",) 
+```
+
+
+####	Distribution of grams of protein (corrected) `in ingredients by age_group`
+
+```{r protein_g_2, message=FALSE, warning=FALSE, echo=TRUE, cache=FALSE, collapse=TRUE, results='asis'}
+# Visualize the results
+p = ggplot(baseline_data, aes(x = `Protein (g)_corrected`, fill = age_group)) +
+  geom_histogram(aes(y = after_stat(count)/sum(after_stat(count)) * 100),
+                 color = "black", binwidth = 2, position = "dodge") +
+  theme_minimal() +
+  ggtitle("Distribution of corrected protein (g) values by age group"  |> str_wrap()) +
+  xlab("Protein (g)") + ylab("Percentage") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), plot.title = element_text(size = 10))   # Angle x-axis tick labels at 90 degrees
+
+# Convert ggplot object to plotly object
+plotly_obj = ggplotly(p)
+
+# Define HTML output
+html_output = tagList(
+  tags$div(plotly_obj, style = "margin:5px;")
+)
+# Print the Plotly object as an HTML output
+browsable(html_output)
+
+
+baseline_data |>
+  mutate(`protein (g)_corrected range` = cut(`Protein (g)_corrected`, 
+                                             breaks = seq(0, ceiling(max(`Protein (g)_corrected`, na.rm = TRUE)/10)*10, by = 5),
+                                             include.lowest = TRUE,
+                                             right = TRUE)) |>
+  count(`protein (g)_corrected range`, age_group) |>
+  group_by(age_group) |>
+  summarise(
+    `protein (g)_corrected range` = `protein (g)_corrected range`,
+    Frequency = n, `percent of age group` = (100 * n / sum(n)) |> round(2)
+  ) |> ungroup() |>
+  mutate(
+    `percent of population` = (100 * Frequency / sum(Frequency)) |> round(2)) |>
+  relocate(age_group, .before = Frequency) |>
+  arrange(`protein (g)_corrected range`, age_group) |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Distribution of grams of protein (corrected) `in ingredients by age_group`",) 
+```
+
+
+# 2. Protein Digestibility Data
+
+This is extracted from the *GENFOOD-Protein Digestibility-250925-142812.pdf*. If the extracted file is missing, the code below will display the pdf pages in the "Viewer pane". You trace the area around the tables to be extracted and they will be extracted and saved.
+
+```{r data_1_g, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+if(!"GENFOOD-Protein Digestibility-250925-142812 extracted.csv" %in% list.files(here())) {
+  digestibility_source = "GENFOOD-Protein Digestibility-250925-142812.pdf"
+  digestibility_table = extract_areas(digestibility_source)[1:10]
+  digestibility_col_names = c("Food item", "PDCA", "Protein", "Source")
+  
+  digestibility_table = digestibility_table |>
+    map(~{
+      if(sum(names(.x) %in% digestibility_col_names) == 4) {
+        .x = .x[-(1:2), c(1,3)] |>
+          rename_with(~c("Food item", "Protein_digestibility")) |>
+          filter(!is.na(Protein_digestibility))
+      } else {
+        .x = .x[ , c(1, 3)] |>
+          rbind(names(.x)[c(1, 3)]) |>
+          rename_with(~c("Food item", "Protein_digestibility")) |>
+          filter(!is.na(Protein_digestibility))
+      }
+    }) |> bind_rows() |>
+    mutate(
+      Protein_digestibility = ifelse(
+        grepl("^\\.", Protein_digestibility),  # Check if the value starts with a dot
+        NA_character_,  # Replace with NA
+        Protein_digestibility  # Keep the original value
+      ),
+      Protein_digestibility = as.numeric(Protein_digestibility)  # Convert to numeric
+    )
+  
+  write_csv(digestibility_table, file = here("GENFOOD-Protein Digestibility-250925-142812 extracted.csv"))
+}
+```
+
+
+```{r data_1_c, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+protein_digestibility_csv = read_csv(here("Protein digestibility.csv")) |>
+  rename(Protein_digestibility = `True fecal digestibility`, Protein_Source = `Protein Source`) |> 
+  select(Protein_Source, Protein_digestibility) # from csv file shared
+
+protein_digestibility_pdf = read_csv(file = here("GENFOOD-Protein Digestibility-250925-142812 extracted.csv")) |>
+  rename(Protein_Source = `Food item`) |> select(Protein_Source, Protein_digestibility) # from protein digestibility pdf from link
+
+protein_digestibility = protein_digestibility_csv |>
+  full_join(protein_digestibility_pdf) |> arrange(Protein_Source) |> na.omit() # |> mutate(Protein_Source_simplified = word(Protein_Source))
+nrow(protein_digestibility)
+```
+
+
+## (a) Clean Ingredient Names in Protein Digestibility Data
+
+```{r clean_ingredient_names_digestibility, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# Protein digestibility data
+# protein_digestibility <- protein_digestibility %>%
+#   mutate(
+#     Protein_Source_simplified = sapply(Protein_Source, clean_for_digestibility)
+#   )
+
+protein_digestibility = protein_digestibility |>
+  mutate(
+    Protein_Source_simplified = Protein_Source |> tolower(),
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "(tea).*white") ~ "tea white",
+      stringr::str_detect(Protein_Source_simplified, "(tea).*black") ~ "tea black",
+      stringr::str_detect(Protein_Source_simplified, "\\btea\\b") ~ "tea",
+      TRUE ~ Protein_Source_simplified),  # Retain existing value if none of the conditions are met
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "(beef|cow).*(low fat|lowfat)") ~ "beef low",  # Replace if "medium fat beef"
+      TRUE ~ Protein_Source_simplified),  # Retain the original value if no match
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "fish") ~ "fish",
+      stringr::str_detect(Protein_Source_simplified, "(nile).*perch") ~ "nile perch",
+      stringr::str_detect(Protein_Source_simplified, "mbuta") ~ "nile perch",
+      stringr::str_detect(Protein_Source_simplified, "tilapia") ~ "tilapia",
+      TRUE ~ Protein_Source_simplified),  # Retain existing value if none of the conditions are met
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "chicken"), "chicken", Protein_Source_simplified), # replace everything that contains chicken to "chicken"
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "chickpea|chickpeas|chick peas") ~ "chick peas",
+      stringr::str_detect(Protein_Source_simplified, "peas * green") ~ "peas",
+      stringr::str_detect(Protein_Source_simplified, "peas") ~ "peas",
+      TRUE ~ Protein_Source_simplified),  # Retain the original value if no match
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "pilau masala") ~ "masala",
+      stringr::str_detect(Protein_Source_simplified, "(rice).*white") ~ "rice white",
+      stringr::str_detect(Protein_Source_simplified, "(rice).*(brown)") ~ "rice brown",
+      stringr::str_detect(Protein_Source_simplified, "brown rice") ~ "rice brown",
+      stringr::str_detect(Protein_Source_simplified, "rice|pilau") ~ "rice white",
+      TRUE ~ Protein_Source_simplified),  # Retain existing value if none of the conditions are met
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "(wheat).*bread") ~ "wheat bread",
+      TRUE ~ Protein_Source_simplified),  # Retain existing value if none of the conditions are met
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "(beans|bean).*red") ~ "beans red",  # Replace if "beans french"
+      stringr::str_detect(Protein_Source_simplified, "beans|bean|geans dried") ~ "beans",  # Replace if "beans"
+      TRUE ~ Protein_Source_simplified
+    ),
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "egg"), "eggs", Protein_Source_simplified), # replace everything that contains egg to "eggs"
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "greens grams|green grams|ndengu|ndegu|baazi green|Gram"), "green gram", Protein_Source_simplified), # replace everything that contains ndengu to "green grams"
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "(green|grain).*maize") ~ "maize grain",
+      stringr::str_detect(Protein_Source_simplified, "(maize|ugali).*unrefined") ~ "maize unrefined",
+      stringr::str_detect(Protein_Source_simplified, "(maize|ugali).*refined") ~ "maize refined",
+      stringr::str_detect(Protein_Source_simplified, "maize|ugali|flour all purpose") ~ "maize unrefined",
+      
+      stringr::str_detect(Protein_Source_simplified, "pepper") ~ "pilipili",  
+      TRUE ~ Protein_Source_simplified),  # Retain the original value if no match
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "(milk).*(cow).*fermented") ~ "yoghurt",  # Replace if "fermented cow milk"
+      stringr::str_detect(Protein_Source_simplified, "mala|yoghurt") ~ "yoghurt",
+      stringr::str_detect(Protein_Source_simplified, "(milk).*cow") ~ "milk cow",  # Replace if "cow milk"
+      stringr::str_detect(Protein_Source_simplified, "(milk).*camel") ~ "milk camel",  # Replace if "camel milk"
+      stringr::str_detect(Protein_Source_simplified, "(milk).*goat") ~ "milk goat",  # Replace if "goat milk"
+      stringr::str_detect(Protein_Source_simplified, "milk|cow milk") ~ "milk cow",  # Replace if "liver" is found
+      TRUE ~ Protein_Source_simplified),  # Retain the original value if no match
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "weetaibix|WEETABIX") ~ "weetabix",
+      TRUE ~ Protein_Source_simplified),  # Retain the original value if no match
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "(wheat).*flour"), "wheat flour", Protein_Source_simplified), # replace everything that contains wheat to "wheat"
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "casein"), "casein", Protein_Source_simplified), # replace everything that contains casein to "casein"
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "managu|kienyeji green|nightshade"), "blacknightshade", Protein_Source_simplified), # replace everything that contains managu to "managu"
+    
+    
+    Protein_Source_simplified = case_when(
+      str_detect(Protein_Source_simplified, "Orange, pulp, raw") ~ "orange",
+      TRUE ~ Protein_Source_simplified
+    ),
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "coriander|corriander|dhania|dhani"), "dhania", Protein_Source_simplified), # replace everything that contains capsicum to "capsicum"
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "coconut"), "coconut", Protein_Source_simplified), # replace everything that contains coconut to "coconut"
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "lentil"), "lentil", Protein_Source_simplified), # replace everything that contains lentil to "lentil"
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "cowpea|cow pea"), "cowpeas", Protein_Source_simplified), # replace everything that contains cow pea green to "cowpeas"
+    
+    Protein_Source_simplified = case_when(
+      stringr::str_detect(Protein_Source_simplified, "(sukuma|sukjma|kales|green fresh without stalks|kanjera|kansela).*ethiopia") ~ "ethiopian kales",
+      stringr::str_detect(Protein_Source_simplified, "sukuma|sukjma|kales|green fresh without stalks|kanjera|kansela") ~ "kales",
+      
+      TRUE ~ Protein_Source_simplified),  # Retain the original value if no match
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "oil |cooking fat|o l|oil,"), "oil", Protein_Source_simplified), # replace everything that contains oil to "oil"
+    
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "potato"), "potato", Protein_Source_simplified), # replace everything that contains potato to "potato"
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "pumpkin seed"), "pumpkin seed", Protein_Source_simplified), # replace everything that contains pumpkin seed to "pumpkin seed"
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "omena|dagaa"), "omena", Protein_Source_simplified), # replace everything that contains omena to "omena"
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "sardine|sardines"), "sardine", Protein_Source_simplified), # replace everything that contains omena to "omena"
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "soy protein isolate"), "soy flour", Protein_Source_simplified),
+
+    Protein_Source_simplified = ifelse(stringr::str_detect(Protein_Source_simplified, "sorghum"), "sorghum", Protein_Source_simplified) # replace everything that contains sorghum to "sorghum"
+    
+  )
+
+protein_digestibility |>
+  # where multiple records exist, take the median
+  group_by(Protein_Source_simplified) |>
+  summarise(
+    Protein_Source = Protein_Source[1],
+    Protein_digestibility = median(Protein_digestibility, na.rm = TRUE)) |>
+  relocate(c(Protein_Source, Protein_Source_simplified, Protein_digestibility), .before = everything()) |>
+  ungroup()  |> distinct(Protein_Source_simplified, .keep_all = TRUE)
+```
+
+
+## (b) Match data on  protein digestibility to the ingredients in the baseline data.
+
+Using a Multi-rule approach to improve matching:
+
+- checks exact match first
+- Checks substring match
+- Rejects if length difference >50%
+- Uses word-level matching for multi-word strings
+- Falls back to comprehensive scoring
+- Uses length-adjusted Jaro-Winkler as final check
+
+```{r best_match, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+source("improved_fuzzy_matching.R")
+```
+
+```{r data_3, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# optimize ingredient names for protein digestibility
+baseline_data = baseline_data |>
+  mutate(
+    ingredient_name_simplified_digestibility = ingredient_name_simplified,
+    
+    ingredient_name_simplified_digestibility = case_when(
+      stringr::str_detect(ingredient_name_simplified_digestibility, "flour.*brown") ~ "millet",
+      
+      stringr::str_detect(ingredient_name_simplified_digestibility, "maize grain") ~ "maize unrefined",
+      stringr::str_detect(ingredient_name_simplified_digestibility, "(maize|ugali|white).*unrefined") ~ "maize unrefined",
+      
+      stringr::str_detect(ingredient_name_simplified_digestibility, "(maize|white|ugali).*(sifted|refined|fortified|grade|jogoo|pembe|shujaa|soko)") ~ "maize refined",
+      stringr::str_detect(ingredient_name_simplified_digestibility, "ringows") ~ "maize refined",
+      stringr::str_detect(ingredient_name_simplified_digestibility, "maize|ugali") ~ "maize unrefined", # flour all purpose to move to wheat
+      stringr::str_detect(ingredient_name_simplified_digestibility, "flour all purpose") ~ "wheat flour",
+      
+      TRUE ~ ingredient_name_simplified_digestibility),  # Retain the original value if no match
+    
+    
+    
+    ingredient_name_simplified_digestibility  = case_when(
+      stringr::str_detect(ingredient_name_simplified_digestibility, "milk mala") ~ "milk cow",
+      TRUE ~ ingredient_name_simplified_digestibility),  # Retain existing value if none of the conditions are met
+    
+    ingredient_name_simplified_digestibility = case_when(
+      stringr::str_detect(ingredient_name_simplified_digestibility, "(beef|cow).*(low fat|lowfat)") ~ "beef low",  # Replace if "medium fat beef"
+      stringr::str_detect(ingredient_name_simplified_digestibility, "beef") ~ "beef",
+      stringr::str_detect(ingredient_name_simplified_digestibility, "sardine|omena") ~ "fish",
+      
+      stringr::str_detect(ingredient_name_simplified_digestibility, "(beans|bean).*red") ~ "beans red",  # Replace if "beans french"
+      stringr::str_detect(ingredient_name_simplified_digestibility, "beans") ~ "beans",
+      TRUE ~ ingredient_name_simplified_digestibility),  # Retain the original value if no match
+  )
+
+# 5. Update merged_data with Protein_digestibility and Protein_Source based on partial matches
+cat("Excluding these ingredients from fuzzy matching (have no match hence prevent error matching):\n")
+excluded_ingredients <- c("soy flour", "oil", "sugar", "tomato", "water")
+
+
+# Step 1: Split baseline_data into two groups
+baseline_to_match <- baseline_data |>
+  filter(!tolower(ingredient_name_simplified_digestibility) %in% excluded_ingredients)
+
+baseline_excluded <- baseline_data |>
+  filter(tolower(ingredient_name_simplified_digestibility) %in% excluded_ingredients) 
+
+merged_data <- baseline_to_match |>
+  fuzzy_left_join(
+    protein_digestibility, 
+    by = c("ingredient_name_simplified_digestibility" = "Protein_Source_simplified"), 
+    match_fun = best_fuzzy_match
+  ) |>
+  group_by(participant_id, time, food_item_proc_std, ingredient_name, 
+           ingredient_name_simplified_digestibility, food_recipe_name, 
+           volume_calc, `Protein (g)`) |>
+  slice_max(
+    calculate_match_score(ingredient_name_simplified_digestibility, Protein_Source_simplified),  
+    n = 1,
+    with_ties = FALSE
+  ) |>
+  ungroup() |>
+  full_join(baseline_excluded, by = NULL) |>
+  full_join(
+    baseline_data, by = NULL)
+
+nrow(merged_data)
+```
+
+
+## (c) Ingredients missing protein digestibility:  Where protein digestibility is missing, use the value 1
+
+```{r missing_digestibility, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+missing_digestibility = merged_data |>
+  filter(is.na(Protein_digestibility)) |>
+  select(ingredient_name, ingredient_name_simplified_digestibility) 
+
+missing_digestibility[["ingredient_name_simplified_digestibility"]] |> 
+  unique() |> sort() |> print()
+
+# assign digestibility = 1
+merged_data = merged_data |>
+  mutate(
+    Protein_digestibility = case_when(
+      is.na(Protein_digestibility) ~ 1, 
+      TRUE ~ Protein_digestibility
+    ))
+```
+
+## (d) Ingredients' digestibility
+
+each row is a unique simplified ingredient name and the digestibility figures for each 
+
+```{r matched_digestibility, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+merged_data |>
+  select(ingredient_name_simplified_digestibility, Protein_digestibility) |> distinct(ingredient_name_simplified_digestibility, .keep_all = TRUE) |>
+  arrange(ingredient_name_simplified_digestibility) |>
+  mutate(Protein_digestibility = Protein_digestibility |> round(2)) |>
+  datatable(options = list(pageLength = 10, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Ingredient's Digestibility")
+```
+
+
+# 3. Amino acids content data (in mg per 100 g edible portion on fresh weight basis (EP))
+
+This is also extracted from the *Kenya Food Composition Table.pdf*. If the extracted file is missing, the code below will display the pdf pages in the "Viewer pane". You trace the area around the tables to be extracted and they will be extracted and saved.
+
+```{r data_1_e, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+if(!"Kenya Food Composition Table Extracted.csv" %in% list.files(here())) {
+  # Extract AA_content_table from the PDF pages 193:194
+  KFCT_source = "Kenya Food Composition Table.pdf"
+  AA_content_table = extract_areas(KFCT_source, pages = 193:194)
+  AA_content_table = AA_content_table |>
+    map(~{
+      names(.x)[-(1:2)] = .x[2, -(1:2)]
+      .x = .x[-(1:3), ] |>
+        as_tibble()
+    })
+  
+  AA_content_table = AA_content_table |>
+    map(~{
+      .x = .x |>
+        
+        mutate(
+          `Food name in English` = case_when(
+            `Food name in English` == "raw" ~ NA_character_,
+            `Food name in English` == "packaged, raw" ~ NA_character_,
+            str_detect(`Food name in English`, "packaged\\s*\\),\\s*raw") ~ NA_character_,
+            `Food name in English` == "peeled, raw" ~ NA_character_,
+            `Food name in English` == "leaves, picked, raw" ~ NA_character_,
+            `Food name in English` == "stripes, raw" ~ NA_character_,
+            `Food name in English` == "mursik" ~ NA_character_,
+            `Food name in English` == "meat&skin, raw" ~ NA_character_,
+            `Food name in English` == "whole, dry, raw" ~ NA_character_,
+            `Food name in English` == "grain, fresh, raw" ~ NA_character_,
+            `Food name in English` == "packaged, raw" ~ NA_character_,
+            `Food name in English` == "grain, dry, raw" ~ NA_character_,
+            `Food name in English` == "fortified/sifted packaged" ~ NA_character_,
+            `Food name in English` == "variety, peeled, raw" ~ NA_character_,
+            `Food name in English` == "unsalted, dry, raw" ~ NA_character_,
+            `Food name in English` == "w/o bone, meat&skin, raw" ~ NA_character_,
+            `Food name in English` == "unsalted" ~ NA_character_,
+            `Food name in English` == "bones, raw" ~ NA_character_,
+            `Food name in English` == "dried" ~ NA_character_,
+            `Food name in English` == "skin, raw" ~ NA_character_,
+            `Food name in English` == "with white stripes, raw" ~ NA_character_,
+            `Food name in English` == "fleshed, peeled, raw" ~ NA_character_,
+            `Food name in English` == "(Lala - Industrial)" ~ NA_character_,
+            `Food name in English` == "(Lala - mursik)" ~ NA_character_,
+            `Food name in English` == "fortified/sifted packaged)," ~ NA_character_,
+            `Food name in English` == "leaves, raw" ~ NA_character_,
+            `Food name in English` == "flesh, raw" ~ NA_character_,
+            `Food name in English` == "picked leaves, raw" ~ NA_character_,
+            `Food name in English` == "Industrial)" ~ NA_character_,
+            `Food name in English` == "mursik)" ~ NA_character_,
+            TRUE ~ `Food name in English`
+          )) |>
+        
+        mutate(across(everything(), ~ replace(., is.na(.), NA))) |>        # Keep NA in place
+        lapply(function(col) {
+          na.omit(col)  # Remove NA values from each column
+        }) |> do.call(what = cbind) |>
+        as_tibble()
+      
+      return(.x)
+    }) |> 
+    
+    bind_rows() |>
+    rename(
+      Histidine = HIS,
+      Isoleucin = ILE, 
+      Leucine = LEU,
+      Lysine = LYS,
+      Methionine = MET,
+      Phenylalanine = PHE,
+      Threonine = THR,
+      Tryptophan = TRP,
+      Valine = VAL) |>
+    
+    select("Food name in English", "Histidine", "Isoleucin", "Leucine", "Lysine", "Methionine", "Phenylalanine", "Threonine", "Tryptophan", "Valine") |>
+    
+    ## NOTE: first "Milk, cow, whole, fermented"  ## second are mursik (Update appropriately) and update baseline data to separate them plus yoghurt
+    # Add "industrial" to the first occurrence and "mursik" to the second occurrence
+    mutate(
+      `Food name in English` = ifelse(
+        `Food name in English` == "Milk, cow, whole, fermented (Lala -",
+        ifelse(
+          row_number() == which(`Food name in English` == "Milk, cow, whole, fermented (Lala -")[1], paste0(`Food name in English`, "industrial"),
+          ifelse(
+            row_number() == which(`Food name in English` == "Milk, cow, whole, fermented (Lala -")[2],  paste0(`Food name in English`, "mursik"),
+            `Food name in English`)),
+        `Food name in English`
+      ))
+  
+  write_csv(AA_content_table, file = here("Kenya Food Composition Table Extracted.csv"))
+}
+```
+
+
+```{r data_1_f, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# 4. Amino acids
+AA_list = c("Histidine", "Isoleucin", "Leucine", "Lysine", "Methionine", "Phenylalanine", "Threonine", "Tryptophan", "Valine")
+
+# From KFCT
+amino_acids_kfct = read_csv(here("Kenya Food Composition Table Extracted.csv")) |>
+  mutate(across(-`Food name in English`, as.numeric))
+
+# From USDA
+amino_acids_usda = paste0(AA_list, ".csv") |>
+  map(~{
+    data = read_csv(here("USDA_amino_acids", .x)) |>
+      rename(`Food name in English` = foodDescription,  !!.x := value) |>
+      select(`Food name in English`, .x) |> distinct()
+    names(data) = gsub(".csv", "", names(data))
+    
+    return(data)
+  }) |> reduce(full_join, by = "Food name in English") |>
+  mutate(across(-`Food name in English`, as.numeric)) |>
+  filter(
+    str_detect(`Food name in English`, "Lentils, sprouted, cooked, stir-fried, with salt"),
+    str_detect(`Food name in English`, "coriander|corriander"),
+    str_detect(`Food name in English`, "garlic|ginger|oil|onion"),
+    str_detect(`Food name in English`, "cassava|carrot|arrowroot"),
+    str_detect(`Food name in English`, "bread|tea|sugar"),)
+
+amino_acids = amino_acids_kfct |>
+  full_join(amino_acids_usda)
+```
+
+
+## (a) clean ingredient names in Amino acid content data 
+
+
+```{r clean_ingredient_names_AA, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# 6. Amino acid data
+amino_acids = amino_acids |>
+  select(`Food name in English`, all_of(AA_list)) |>
+  mutate(
+    food_name_simplified = `Food name in English` |> str_to_lower(),
+    
+    food_name_simplified = case_when(
+      stringr::str_detect(food_name_simplified, "(tea).*white") ~ "tea white",
+      stringr::str_detect(food_name_simplified, "(tea).*black") ~ "tea black",
+      stringr::str_detect(food_name_simplified, "tea") ~ "tea",
+      TRUE ~ food_name_simplified),  # Retain existing value if none of the conditions are met
+    
+    food_name_simplified = case_when(
+      stringr::str_detect(food_name_simplified, "maize, grain, white variety, whole, dry,") ~ "maize-unrefined",
+      stringr::str_detect(food_name_simplified, "maize meal, sifted, fortified, packaged,") ~ "maize-refined",
+      stringr::str_detect(food_name_simplified, "green maize, white, whole, grain, fresh,") ~ "maize-unrefined",
+      
+      stringr::str_detect(food_name_simplified, "pepper") ~ "pilipili",  
+      
+      TRUE ~ food_name_simplified),
+    
+    
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "millet"), "millet", food_name_simplified), # replace everything that contains millet to "millet"
+    
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "coriander|corriander|dhania|dhani"), "dhania", food_name_simplified), # replace everything that contains capsicum to "capsicum"
+    
+    
+    food_name_simplified = case_when(
+      stringr::str_detect(food_name_simplified, "nightshade") ~ "blacknightshade",
+      stringr::str_detect(food_name_simplified, "rice") ~ "rice",
+      TRUE ~ food_name_simplified),  # Retain existing value if none of the conditions are met
+    
+    food_name_simplified = case_when(
+      str_detect(food_name_simplified, "orange, pulp, raw") ~ "orange",
+      TRUE ~ food_name_simplified
+    ),
+    
+    food_name_simplified = case_when(
+      str_detect(food_name_simplified, "potato, irish \\(english\\), white variety,") ~ "potato",
+      TRUE ~ food_name_simplified
+    ),
+    
+    food_name_simplified = case_when(
+      str_detect(food_name_simplified, "sorghum") ~ "sorghum",
+      str_detect(food_name_simplified, "gram") ~ "green gram",
+      
+      stringr::str_detect(food_name_simplified, "weetaibix|WEETABIX") ~ "wheat",
+      
+      TRUE ~ food_name_simplified
+    ),
+    
+    
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "wheat"), "wheat", food_name_simplified), # replace everything that contains wheat to "wheat"
+    
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "greens grams|green grams|ndengu|ndegu|baazi green|Gram"), "green gram", food_name_simplified), # replace everything that contains ndengu to "green grams"
+    
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "banana"), "banana", food_name_simplified), # replace everything that contains banana to "banana"
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "spinach"), "spinach", food_name_simplified), # replace everything that contains spinach to "spinach"
+    
+    food_name_simplified = case_when(
+      stringr::str_detect(food_name_simplified, "beans|bean|geans dried") ~ "beans",  # Replace if "beans"
+      
+      stringr::str_detect(food_name_simplified, "(sukuma|sukjma|kales|green fresh without stalks|kanjera|kansela).*ethiopia") ~ "ethiopian kales",
+      stringr::str_detect(food_name_simplified, "sukuma|sukjma|kales|green fresh without stalks|kanjera|kansela") ~ "kales",
+      TRUE ~ food_name_simplified),  # Retain the original value if no match
+    
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "egg"), "eggs", food_name_simplified), # replace everything that contains egg to "eggs"
+    
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "chicken"), "chicken", food_name_simplified), # replace everything that contains chicken to "chicken"
+    
+    food_name_simplified = case_when(
+      stringr::str_detect(food_name_simplified, "chickpea|chickpeas|chick peas") ~ "chick peas",
+      stringr::str_detect(food_name_simplified, "peas * green") ~ "peas",
+      stringr::str_detect(food_name_simplified, "peas") ~ "peas",
+      TRUE ~ food_name_simplified),  # Retain the original value if no match
+    
+    food_name_simplified = case_when(
+      stringr::str_detect(food_name_simplified, "liver") ~ "beef liver",  # Replace if "liver" is found
+      stringr::str_detect(food_name_simplified, "(beef|cow).*lean") ~ "beef lean",  # Replace if "beef" or "cow" followed by "lean"
+      stringr::str_detect(food_name_simplified, "(beef|cow).*medium fat") ~ "beef medium",  # Replace if "medium fat beef"
+      stringr::str_detect(food_name_simplified, "(beef|cow).*high fat") ~ "beef high",  # Replace if "medium fat beef"
+      stringr::str_detect(food_name_simplified, "(beef|cow).*low fat") ~ "beef low",  # Replace if "medium fat beef"
+      stringr::str_detect(food_name_simplified, "beef|meat") ~ "beef",  # Replace if "beef" or "meat" is found
+      TRUE ~ food_name_simplified),  # Retain the original value if no match
+    
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "omena|dagaa"), "omena", food_name_simplified), # replace everything that contains omena to "omena"
+    food_name_simplified = ifelse(stringr::str_detect(food_name_simplified, "sardine|sardines"), "sardine", food_name_simplified), # replace everything that contains omena to "omena"
+    
+    food_name_simplified = case_when(
+      stringr::str_detect(food_name_simplified, "(milk).*(cow).*fermented") ~ "mursik",  # Replace if "fermented cow milk"
+      stringr::str_detect(food_name_simplified, "yoghurt") ~ "yoghurt",
+      stringr::str_detect(food_name_simplified, "mursik") ~ "mursik",
+      stringr::str_detect(food_name_simplified, "(milk).*cow") ~ "milk cow",  # Replace if "cow milk"
+      stringr::str_detect(food_name_simplified, "(milk).*camel") ~ "milk camel",  # Replace if "camel milk"
+      stringr::str_detect(food_name_simplified, "(milk).*goat") ~ "milk goat",  # Replace if "goat milk"
+      stringr::str_detect(food_name_simplified, "milk|cow milk") ~ "milk cow",  # Replace if "liver" is found
+      TRUE ~ food_name_simplified),  # Retain the original value if no match
+    
+    food_name_simplified = case_when(
+      stringr::str_detect(food_name_simplified, "fish") ~ "tilapia",
+      stringr::str_detect(food_name_simplified, "(nile).*perch") ~ "nile perch",
+      stringr::str_detect(food_name_simplified, "mbuta") ~ "nile perch",
+      stringr::str_detect(food_name_simplified, "tilapia") ~ "tilapia",
+      TRUE ~ food_name_simplified),  # Retain existing value if none of the conditions are met
+    
+  ) |>
+  mutate(across(all_of(AA_list), as.numeric)) |>
+  relocate(food_name_simplified, .after = `Food name in English`) |>
+  rename_with(~ paste0(., "_per_100g"), all_of(AA_list)) |>
+  arrange(food_name_simplified)
+```
+
+
+## (b) Match data on  AA to the ingredients in the baseline data.
+
+I extract simplified food names from the food composition (*amino_acid*) data and use them to match simplified names in the baseline data, adding the amino acid composition in *mg/100g*. Each column *<Amino acid>_per_100g* represents the amount of the amino acid in mg per 100g of crude protein
+
+```{r data_2, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# optimize ingredient names for protein digestibility
+merged_data = merged_data |>
+  mutate(
+    ingredient_name_simplified_AA = ingredient_name_simplified,
+    
+    ingredient_name_simplified_AA = case_when(
+      stringr::str_detect(ingredient_name_simplified_AA, "flour.*brown") ~ "millet",
+      
+      stringr::str_detect(ingredient_name_simplified_AA, "maize grain") ~ "maize unrefined",
+      stringr::str_detect(ingredient_name_simplified_AA, "(maize|ugali|white).*unrefined") ~ "maize unrefined",
+      
+      stringr::str_detect(ingredient_name_simplified_AA, "(maize|white|ugali).*(sifted|refined|fortified|grade|jogoo|pembe|shujaa|soko)") ~ "maize refined",
+      stringr::str_detect(ingredient_name_simplified_AA, "ringows") ~ "maize refined",
+      stringr::str_detect(ingredient_name_simplified_AA, "maize|ugali") ~ "maize unrefined", # flour all purpose to move to wheat
+      stringr::str_detect(ingredient_name_simplified_AA, "flour all purpose") ~ "wheat flour",
+      
+      
+      # stringr::str_detect(ingredient_name_simplified_AA, "(maize|white|ugali).*(sifted|fortified)") ~ "maize refined",
+      # stringr::str_detect(ingredient_name_simplified_AA, "maize grain") ~ "maize grain",
+      # stringr::str_detect(ingredient_name_simplified_AA, "maize green fresh") ~ "maize green",
+      # stringr::str_detect(ingredient_name_simplified_AA, "ringows") ~ "maize refined",
+      
+      # stringr::str_detect(ingredient_name_simplified_AA, "maize|ugali") ~ "maize unrefined", # flour all purpose to move to wheat
+      # stringr::str_detect(ingredient_name_simplified_AA, "flour all purpose") ~ "wheat flour",
+      
+      TRUE ~ ingredient_name_simplified_AA),  # Retain the original value if no match
+    
+    
+    
+    ingredient_name_simplified_AA = case_when(
+      stringr::str_detect(ingredient_name_simplified_AA, "maziwa mala") ~ "mursik",
+      
+      stringr::str_detect(ingredient_name_simplified_AA, "chick.*peas") ~ "peas",
+      stringr::str_detect(ingredient_name_simplified_AA, "beans") ~ "beans",
+      
+      stringr::str_detect(ingredient_name_simplified_AA, "sardine") ~ "omena",
+      stringr::str_detect(ingredient_name_simplified_AA, "rice") ~ "rice",
+      TRUE ~ ingredient_name_simplified_AA))  # Retain the original value if no match)
+```
+
+
+```{r data_2_c, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+
+# 5. Update merged_data with Protein_digestibility and Protein_Source based on partial matches
+cat("Excluding these ingredients from fuzzy matching (have no match hence prevent error matching):\n")
+excluded_ingredients <- c("salt", "tomato", "tomato", "water")
+
+
+# Step 1: Split baseline_data into two groups
+merged_data_to_match <- merged_data |>
+  filter(!tolower(ingredient_name_simplified_AA) %in% excluded_ingredients)
+
+merged_data_excluded <- merged_data |>
+  filter(tolower(ingredient_name_simplified_AA) %in% excluded_ingredients) 
+
+
+# Perform a join based on the simplified keys
+merged_data <- merged_data_to_match |>
+  fuzzy_left_join(
+    amino_acids, 
+    by = c("ingredient_name_simplified_AA" = "food_name_simplified"), 
+    match_fun = best_fuzzy_match
+  ) |>
+  group_by(
+    participant_id, time, food_item_proc_std, ingredient_name, 
+    ingredient_name_simplified_AA, food_recipe_name, 
+    volume_calc, `Protein (g)`
+  ) |>
+  slice_max(
+    calculate_match_score(
+      ingredient_name_simplified_AA, 
+      food_name_simplified  # <-- Correct column from amino_acids
+    ),
+    n = 1,
+    with_ties = FALSE
+  ) |>
+  full_join(merged_data_excluded, by = NULL) |>
+  ungroup() |>
+  full_join(
+    baseline_data, by = NULL)
+```
+
+
+
+## (d) Ingredients missing amino acid content
+
+```{r missing_AA, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+missing_AA = merged_data |>
+  filter(is.na(`Food name in English`)) |>
+  select(ingredient_name, ingredient_name_simplified_AA)
+
+missing_AA[["ingredient_name_simplified_AA"]] |> 
+  unique() |> sort() |> print()
+```
+
+## (e) Ingredients' Amino Acid
+
+each row is a unique simplified ingredient name and the AA values for each (mg/100g ingredient)
+
+```{r matched_AA, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+merged_data |>
+  select(`Food name in English`, ingredient_name_simplified_AA, paste0(AA_list, "_per_100g")) |> distinct(ingredient_name_simplified_AA, .keep_all = TRUE) |>
+  datatable(options = list(pageLength = 10, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Ingredient's Amino Acid Contents per 100 grams of food")
+```
+
+
+## (f) Names Matched 
+
+each row is a unique original ingredient name and the other columns are: (i) name to match for digestibility; (ii) name to match for AA
+
+```{r matched_names, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+merged_data |>
+  select(# ingredient_name, 
+         ingredient_name_simplified, Protein_Source, Protein_Source_simplified, `Food name in English`, food_name_simplified) |>
+  rename(`Matched Digestibilty Ingredient` = Protein_Source_simplified, `Matched Amino Acid Ingredient` = food_name_simplified) |>
+  distinct() |>
+  datatable(options = list(pageLength = 20, 
+                           scrollX = TRUE , dom = 'Bfrtip'
+                           ), 
+            filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Ingredient Names Matched")
+```
+
+
+
+# 4. % of students consuming animal protein from home 
+
+```{r animal_protein_1, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# Create a new variable to indicate presence of animal based protein type
+merged_data = merged_data |>
+  group_by(participant_id) |>
+  mutate(
+    has_animal_protein = any(animal_protein_presence == "animal based") |> as.character()) |>
+  ungroup()
+
+has_animal_protein_data = merged_data |>
+  select(participant_id, has_animal_protein) |> distinct()
+have_animal_prot_home = (100 * ((has_animal_protein_data$has_animal_protein == "TRUE") |> sum(na.rm = TRUE)) / (has_animal_protein_data$has_animal_protein |> na.omit() |> length())) |> round(2)
+```
+
+`r have_animal_prot_home`$\%$ of participants have animal protein at home
+
+# 5. Amino Acids and Protein Requirements (denominators)
+
+```{r data_1_b, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+Amino_acids_requirements_data = read_xlsx(here("protein_AA_req.xlsx")) [c(3, 5, 8:16), ] |> t() |> as_tibble() # extract the relevant rows containing the protein and AA requirements and clean the table
+names(Amino_acids_requirements_data) = c("age", "protein_req", paste0(Amino_acids_requirements_data[1, 3:11], "_req"))
+Amino_acids_requirements_data = Amino_acids_requirements_data |> na.omit() |>
+  # clean age column to make it suitable for matching to child_age column in the baseline data
+  separate(age, into = c("child_age", "max_age"), sep = "[-+]", fill = "right") |>
+  mutate(across(everything(), ~ as.numeric(.))) |> 
+  mutate(child_age = child_age |> as.character()) |>
+  full_join(tibble(child_age = seq(min(baseline_data$child_age, na.rm = TRUE), max(baseline_data$child_age, na.rm = TRUE), by = 0.1) |> as.character())) |>
+  arrange(child_age) |> fill(everything(), .direction = "down") |> select(-max_age) |>
+  mutate(child_age = child_age |> as.character())
+nrow(Amino_acids_requirements_data)
+
+# 4. Add Protein and AA requirements to baseline_data based on age
+merged_data = merged_data |>
+  mutate(child_age = as.character(child_age)) |>
+  left_join(Amino_acids_requirements_data, by = "child_age") 
+```
+
+# 6. Variables
+
+1. *school meal protein (19.4g) and digestible protein (15.8g)*
+
+```{r, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+merged_data = merged_data |>
+  mutate(
+    school_meal_protein_new = ifelse(`SFP received` == 1, 19.4, 0), # Can you show in the code where you hard code in the 20 grams for the F4E meal and make sure that is clear in the code?
+    school_meal_protein_digestible = ifelse(`SFP received` == 1, 15.8, 0),
+  )
+```
+
+2. *individual_protein_requirement (g)*: The Daily individual protein requirement Based on WHO g/kg recommendations by age (*protein_req* column), multiplied by weight of student (*child_weight* column)
+
+```{r, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+merged_data = merged_data |>
+  mutate(
+    individual_protein_requirement = protein_req * child_weight,)
+```
+
+3. *individual amino acid requirement (mg)*: `AA_req * child_weight`
+
+```{r, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+merged_data = merged_data |>
+  mutate(
+    # Adjust AA requirements for age
+    individual_Histidine_requirement = Histidine_req * child_weight,
+    individual_Isoleucin_requirement = Isoleucine_req * child_weight,
+    individual_Leucine_requirement = Leucine_req * child_weight,
+    individual_Lysine_requirement = Lysine_req * child_weight,
+    individual_Methionine_requirement = Methionine_req * child_weight,
+    individual_Phenylalanine_requirement = Phenylalanine_req * child_weight,
+    individual_Threonine_requirement = Threonine_req * child_weight,
+    individual_Tryptophan_requirement = Tryptophan_req * child_weight,
+    individual_Valine_requirement = Valine_req * child_weight,
+  )
+
+merged_data |>
+  select(participant_id, child_sex, child_weight, age_group, contains(paste0("individual_", names(Amino_acids_requirements_data)))) |>
+  distinct() |> 
+  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Individual Protein and Amino Acid Requirements by Participant",) 
+```
+
+4. *Amino Acid (AA) content (mg)*: AA composition (in mg) per 100 grams ingredients * volume_calc
+
+```{r, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+merged_data = merged_data |>
+  mutate(
+    across(all_of(paste0(AA_list, "_per_100g")), ~ round( . * volume_calc, 2), .names = "{gsub('_per_100g', '', .col)}_content"), 
+  )
+
+merged_data |>
+  select(ingredient_name, ingredient_name_simplified, volume_calc, all_of(paste0(AA_list, "_content"))) |>
+  distinct() |> mutate(across(where(is.numeric), ~round(.x, 2))) |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Total Amino Acid content in the ingredients",) 
+```
+
+
+5. *digestible_protein (g)_corrected* and *digestible AA content*
+
+
+```{r, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+# include school meal protein (crude and digestible)
+merged_data = merged_data |>
+  mutate(
+    across(all_of(paste0(AA_list, "_content")), ~ ( . * Protein_digestibility) |> round(2), .names = "{gsub('_content', '_digestible', .col)}"),
+    
+    # calculate Protein digestible content in ingredients 
+    `digestible_Protein (g)_corrected` = `Protein (g)_corrected` * Protein_digestibility, # to be summed by individual
+  ) |>
+  distinct()
+```
+
+
+## recalculating `Home, Home+school, Digestible Protein, AA content and other daily totals` per participant
+
+6. *home_protein_consumption_new* total of individual's corrected protein (g)
+7. *digestible_home_protein*: total of individual's digestible_Protein (g)_corrected
+
+8. *home+school protein consumption new*: *home_protein_consumption_new* + *school_meal_protein_new*
+9. *digestible_home+school protein consumption new*: *digestible_home_protein* + *school_meal_protein_digestible*
+
+10.*home_protein_consumption_perc_of_RDA* and *home_protein_consumption_perc_of_individual_protein_requirement*: proportion of RDA or individual protein requirement met by crude home protein only
+11. *home_Digestible_protein_perc_of_RDA* and *home_Digestible_protein_perc_of_individual_requirement*: proportion of RDA or individual protein requirement met by digestible home protein only
+
+12. *home+school_protein_perc_of_RDA* and *home+school_protein_perc_of_individual_requirement*: proportion of RDA or individual protein requirement met by crude home+school protein (using new values) ($100\ *\frac{home+school\ protein\ consumption}{RDA\ Protein\ requirement}$ and $100\ *\frac{home+school\ protein\ consumption}{individual\ Protein\ requirement}$)
+13. *home+school_Digestible_protein_perc_of_RDA* $(= 100 * \frac{digestible_home+school protein consumption} {RDA\ protein\ requirement})$ and *home+school_Digestible_protein_perc_of_individual_requirement* $(= 100 * \frac{digestible_home+school protein consumption} {individual\ protein\ requirement})$ : proportion of RDA or individual protein requirement met by digestible home+school protein (using new values) 
+
+14. *{AA}_perc_of_RDA* and *{AA}_digestible_perc_of_RDA*: proportion of individual Amino acid requirement met by crude and digestible Amino acid
+15. *{AA}_perc_of_individual_requirement* and *{AA}_digestible_perc_of_individual_requirement*: proportion of individual Amino acid requirement met by crude and digestible Amino acid
+
+
+```{r, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+# Daily Totals function
+daily_totals_fun = function(merged_data) {
+  baseline_data_aggregated = merged_data |>
+    group_by(participant_id) |>
+    summarise(
+      age_group = age_group |> unique(),
+      child_age = child_age |> unique(),
+      child_sex = child_sex |> unique(),
+      
+      # home protein       
+      home_protein_consumption_new = sum(`Protein (g)_corrected`, na.rm = TRUE),
+      digestible_home_protein = sum(`digestible_Protein (g)_corrected`, na.rm = TRUE),
+      
+      # home AA  per participant 
+      across(all_of(paste0(AA_list, "_content")), ~ sum(., na.rm = TRUE), .names = "total_daily_{.col}"), 
+      across(all_of(paste0(AA_list, "_digestible")), ~ sum(., na.rm = TRUE), .names = "total_daily_{.col}"),
+      
+      # total protein
+      `home+school protein consumption new` = home_protein_consumption_new + school_meal_protein_new,
+      `digestible_home+school protein consumption new` = digestible_home_protein + school_meal_protein_digestible,) |>
+    ungroup() |> 
+    distinct() |>
+    
+    left_join(
+      merged_data |>
+        select(participant_id,  `RDA protein requirement`, contains("individual"), has_animal_protein) |>
+        distinct())
+  
+  # consumption vs requirementt
+  baseline_data_aggregated = baseline_data_aggregated |>
+    mutate(
+      home_protein_consumption_perc_of_RDA = (100 * `home_protein_consumption_new` / `RDA protein requirement`) |> round(2), 
+      home_protein_consumption_perc_of_individual_protein_requirement = (100 * `home_protein_consumption_new`  / individual_protein_requirement) |> round(2),
+      
+      home_Digestible_protein_perc_of_RDA = (100 * digestible_home_protein  /  `RDA protein requirement`) |> round(2),
+      home_Digestible_protein_perc_of_individual_requirement = (100 * digestible_home_protein   /  individual_protein_requirement) |> round(2),
+      
+      `home+school_protein_perc_of_RDA` = (100 * `home+school protein consumption new` / `RDA protein requirement`) |> round(2),
+      `home+school_protein_perc_of_individual_requirement` = (100 * `home+school protein consumption new` / individual_protein_requirement) |> round(2),
+      
+      `home+school_Digestible_protein_perc_of_RDA` = (100 * `digestible_home+school protein consumption new`  /  `RDA protein requirement`) |> round(2),
+      `home+school_Digestible_protein_perc_of_individual_requirement` = (100 * `digestible_home+school protein consumption new`   /  individual_protein_requirement) |> round(2))
+  
+  baseline_data_aggregated =  AA_list |> 
+    map(
+      ~ {
+        baseline_data_aggregated |>
+          mutate(
+            !!paste0(.x, "_perc_of_individual_requirement") := (100 * get(paste0("total_daily_", .x, "_content")) / get(paste0("individual_", .x, "_requirement"))),
+            !!paste0(.x, "_digestible_perc_of_individual_requirement") := (100 * get(paste0("total_daily_", .x, "_digestible")) / get(paste0("individual_", .x, "_requirement"))),
+            
+            !!paste0(.x, "_perc_of_RDA") := (100 * get(paste0("total_daily_", .x, "_content")) / (1000 * `RDA protein requirement`)),
+            !!paste0(.x, "_digestible_perc_of_RDA") := (100 * get(paste0("total_daily_", .x, "_digestible")) / (1000 * `RDA protein requirement`)))
+      }
+    ) |> reduce(left_join)
+  
+  return(baseline_data_aggregated)
+}
+```
+
+
+```{r new_variables_3, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+baseline_data_aggregated = daily_totals_fun(merged_data = merged_data)
+```
+
+
+15. *ingredient_name_simplified*: created from *ingredient_name* to facilitate better matching with protein digestibility and AA content datasets (*NOTE:* an intermediary column not used in matching)
+16. *ingredient_name_simplified_digestibility*: created from *ingredient_name_simplified* optimizing it for matching with protein digestibility
+17. *ingredient_name_simplified_AA*: created from *ingredient_name_simplified* optimizing it for matching with AA content
+18. *Protein_Source_simplified*: extract from the *Protein_Source* column in protein digestibility data for simplicity matching with *ingredient_name_simplified_digestibility*
+19. *food_name_simplified*: extract from the *Food name in English* amino acid contents data for simplicity matching with *ingredient_name_simplified_AA*
+
+
+# 7. RDA vs. individual requirement
+
+Table of average individual requirement by age (every year) vs. RDA for that age
+
+```{r rda_vs_ind_req, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+rda_vs_ind_req = merged_data |>
+  group_by(child_age) |>
+  summarise(
+    `RDA protein requirement` = `RDA protein requirement`,
+    `Individual protein requirement` = mean(individual_protein_requirement, na.rm = TRUE)
+  )  |> distinct()
+
+rda_vs_ind_req |>
+  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  datatable(options = list(pageLength = 25, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "average individual requirement vs. RDA by age",) 
+```
+
+# 8. full datasets with all old and new variables
+
+```{r joined_data_unaggregated, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+joined = merged_data |>
+  # select(
+  #   participant_id, ingredient_name_simplified, ingredient_name_simplified_AA, food_name_simplified, ingredient_name_simplified_digestibility, Protein_Source_simplified, food_prep_methos, 
+  #   all_of(paste0(AA_list, "_content")), Protein_digestibility, `%_Protein`, protein_perc_corrected, `Protein (g)_corrected`, volume_calc, volume_consumed) |>
+  
+  left_join(
+    baseline_data_aggregated, by = NULL) |>
+  mutate(across(where(is.numeric), ~round(.x, 2)))
+
+joined = joined |>
+  rename_with(~ ifelse(. %in% original_cols, ., paste0("t_", .)))
+
+joined |>
+  datatable(options = list(pageLength = 25, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Full dataset with old and new variables (original ingredient level data + aggregated data)",) 
+
+
+# baseline_data_aggregated |>
+#   datatable(options = list(pageLength = 25, 
+#                            scrollX = TRUE,
+#                            dom = 'Bfrtip'), filter = 'top',  
+#             extensions = 'Buttons',
+#             caption = "Aggregated dataset (Daily totals per participant)",) 
+```
+
+
+# 9. distribution of *home protein consumption new* 
+
+```{r home_protein_dist, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+# Visualize the results
+p = ggplot(baseline_data_aggregated, aes(x = home_protein_consumption_new, fill = has_animal_protein)) +
+  geom_histogram(aes(y = after_stat(count)/sum(after_stat(count)) * 100),
+                 # fill = "lightblue", 
+                 color = "black", position = "dodge", binwidth = 10) +
+  theme_minimal() +
+  ggtitle("Distribution of home protein consumption"  |> str_wrap()) +
+  xlab("Home Protein Consumption (g)") + ylab("Percentage") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), plot.title = element_text(size = 10))   # Angle x-axis tick labels at 90 degrees
+# Convert ggplot object to plotly object
+plotly_obj = ggplotly(p)
+
+# Define HTML output
+html_output = tagList(
+  tags$div(plotly_obj, style = "margin:5px;")
+)
+# Print the Plotly object as an HTML output
+browsable(html_output)
+
+
+baseline_data_aggregated |>
+  mutate(home_protein_consumption_new = cut(home_protein_consumption_new, 
+                                            breaks = seq(0, ceiling(max(home_protein_consumption_new, na.rm = TRUE)/10)*10, by = 5),
+                                            include.lowest = TRUE,
+                                            right = TRUE)) |>
+  count(home_protein_consumption_new, has_animal_protein) |>
+  group_by(home_protein_consumption_new, has_animal_protein) |>
+  summarise(
+    home_protein_consumption_new = home_protein_consumption_new,
+    Frequency = n, 
+  ) |> ungroup() |>
+  mutate(
+    `percent of population` = (100 * Frequency / sum(Frequency)) |> round(2),
+    `cummulative percentage` = cumsum(`percent of population`) |> round(2)) |>
+  relocate(has_animal_protein, .before = Frequency) |>
+  # arrange(home_protein_consumption_new, has_animal_protein) |>
+  datatable(options = list(pageLength = 15, 
+                           scrollX = TRUE,
+                           dom = 'Bfrtip'), filter = 'top',  
+            extensions = 'Buttons',
+            caption = "Distribution of grams of protein (corrected) `in ingredients by age_group`",) 
+```
+
+
+
+# 10.	% of people who have RDA requirement covered from crude home protein
+
+```{r satisfaction_funs, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+satisfaction_funs = function(column) {
+  students_protein_met = baseline_data_aggregated |>
+    summarise(
+      percentage = (sum(!!sym(column) >= 100, na.rm = TRUE) / length(participant_id) * 100) |> round(2),
+    )
+  p1 = students_protein_met |>
+    datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = paste("% of students who meet ", column))
+  
+  # by age group
+  students_protein_met_by_age_group = baseline_data_aggregated |>
+    group_by(age_group) |>
+    summarise(
+      percentage = (sum(!!sym(column) >= 100, na.rm = TRUE)  / length(participant_id) * 100) |> round(2),
+    ) 
+  p2 = students_protein_met_by_age_group |>
+    datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = paste("% of students who meet", column, " by Age group"))
+  
+  # by gender
+  students_protein_met_by_gender = baseline_data_aggregated |>
+    group_by(child_sex) |>
+    summarise(
+      percentage = (sum(!!sym(column) >= 100, na.rm = TRUE)  / length(participant_id) * 100) |> round(2),
+    )
+  p3 = students_protein_met_by_gender |>
+    datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = paste("% of students who meet", column, " by Sex"))
+  
+  # by age and gender
+  students_protein_met_by_age_gender = baseline_data_aggregated |>
+    group_by(age_group, child_sex) |>
+    summarise(
+      percentage = (sum(!!sym(column) >= 100, na.rm = TRUE)  / length(participant_id)  * 100) |> round(2),
+    ) 
+  p4 = students_protein_met_by_age_gender |>
+    datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = paste("% of students who meet", column, " by Age and Sex"))
+  
+  output = do.call(tagList, list(p1, p2, p3, p4))
+  return(output)
+}
+```
+
+```{r student_protein_RDA_3, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+satisfaction_funs("home_protein_consumption_perc_of_RDA")
+```
+
+# 11.	% of people who have individual requirement covered from crude home protein
+
+
+```{r student_protein_RDA_4, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+satisfaction_funs("home_protein_consumption_perc_of_individual_protein_requirement")
+```
+
+
+# 12.	% of people who have RDA requirement covered from digestible home protein
+
+
+```{r student_protein_RDA_2a, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+satisfaction_funs("home_Digestible_protein_perc_of_RDA")
+```
+
+# 13.	% of people who have individual requirement covered from digestible home protein
+
+```{r student_protein_RDA_32, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+satisfaction_funs("home_Digestible_protein_perc_of_individual_requirement")
+```
+
+
+# 14. Average % of RDA covered in home consumption 
+
+```{r satisfaction_dist_funs, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# population
+satisfaction_dist_pop = function(columns, by = 10) {
+  # summary population
+  p1 = baseline_data_aggregated |>
+    select(all_of(columns)) |>
+    describe() |>  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+    datatable(options = list(pageLength = 25, 
+                             scrollX = TRUE,
+                             dom = 'Bfrtip'), filter = 'top',  
+              extensions = 'Buttons',
+              caption = "Population Summary")
+  
+  # summary by age group
+  p2 = baseline_data_aggregated |>
+    group_by(age_group) |>
+    summarise(
+      across(columns, ~(median(., na.rm = TRUE)), .names = "median_{.col}"),
+      across(columns, ~(sd(., na.rm = TRUE)), .names = "sd_{.col}"))|>
+    ungroup()   |> mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+    datatable(options = list(pageLength = 25, 
+                             scrollX = TRUE,
+                             dom = 'Bfrtip'), filter = 'top',  
+              extensions = 'Buttons',
+              caption = "Summary by Age Group")
+  
+  # summary by gender
+  p3 = baseline_data_aggregated |>
+    group_by(child_sex) |>
+    summarise(across(columns, ~(median(., na.rm = TRUE)), .names = "median_{.col}"),
+              across(columns, ~(sd(., na.rm = TRUE)), .names = "sd_{.col}"))|>
+    ungroup()  |>  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+    datatable(options = list(pageLength = 25, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "Summary by Gender")
+  
+  # summary by age group and gender
+  p4 = baseline_data_aggregated |>
+    group_by(age_group, child_sex) |>
+    summarise(across(columns, ~(median(., na.rm = TRUE)), .names = "median_{.col}"),
+              across(columns, ~(sd(., na.rm = TRUE)), .names = "sd_{.col}"))|>
+    ungroup()  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+    datatable(options = list(pageLength = 25, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "Summary by Age Group and Gender")
+  
+  
+  # Interleave frequency tables and distribution plots
+  output = columns |>
+    map(~ {
+      
+      # Create frequency table
+      freq_table = baseline_data_aggregated |>
+        mutate(Value = cut(.data[[.x]], 
+                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10, 
+                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10, 
+                                        by = by), include.lowest = TRUE)) |>
+        group_by(Value) |>
+        summarise(n = n()) |> ungroup() |>
+        mutate(
+          percentage = 100 * n / sum(n, na.rm = TRUE),
+          cumulative_percentage = round(cumsum(percentage), 2)) |>
+        mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
+                  extensions = 'Buttons', 
+                  caption = paste("Frequency Table for ", gsub("_", " ", .x), " for Population") |> str_wrap())
+      
+      # Create the distribution plot
+      plot = ggplot(baseline_data_aggregated, aes(.data[[.x]])) +
+        geom_histogram(aes(y = after_stat(count)/sum(after_stat(count)) * 100),
+                       binwidth = by, fill = "lightblue", color = "black") +
+        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(),
+             x = .x,
+             y = "Percentage") +
+        scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+        theme_minimal() +
+        theme(plot.title = element_text(size = 10))  
+      
+      # Convert the ggplot to a plotly object
+      plotly_plot = ggplotly(plot)
+      
+      # Return the plot and table as a list
+      list(plot = plotly_plot, freq_table = freq_table)
+    })
+  
+  # Create a new list to hold the interleaved output
+  interleaved_output = unlist(lapply(output, function(x) {
+    list(x$plot, x$freq_table)
+  }), recursive = FALSE)
+  
+  # Convert list of divs to a single HTML output
+  final_output = do.call(tagList, list(p1, p2, p3, p4, interleaved_output))
+  
+  # Print the combined HTML output using browsable
+  browsable(final_output)
+}
+
+
+
+# by age
+satisfaction_dist_age = function(columns, by = 20) {
+  # Interleave distribution plots and frequency tables
+  output = columns |>
+    map(~ {
+      # Create the distribution plot by age group
+      plot = ggplot(baseline_data_aggregated, aes(y = .data[[.x]], fill = age_group)) + 
+        geom_histogram(aes(x = after_stat(count) / sum(after_stat(count)) * 100,
+                           text = paste("Percentage:", after_stat(count) / sum(after_stat(count)) * 100,
+                                        "<br>", .x, after_stat(y))),
+                       binwidth = by, position = "dodge", color = "black") +
+        scale_x_continuous(labels = scales::percent_format(scale = 1)) +
+        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(),
+             y = .x,
+             x = "Percentage") +
+        coord_flip() +
+        theme_minimal() +
+        theme(plot.title = element_text(size = 10))
+      
+      # Convert the ggplot to a plotly object
+      plotly_plot = ggplotly(plot, tooltip = "text")
+      
+      # Create frequency table
+      freq_table = baseline_data_aggregated |>
+        mutate(Value = cut(.data[[.x]], 
+                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10, 
+                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10, 
+                                        by = by), include.lowest = TRUE)) |>
+        group_by(age_group, Value) |>
+        summarise(n = n()) |> ungroup() |>
+        mutate(
+          percentage = 100 * n / sum(n, na.rm = TRUE),
+          cumulative_percentage = round(cumsum(percentage), 2)) |>
+        mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
+                  extensions = 'Buttons', 
+                  caption = paste("Frequency Table for ", gsub("_", " ", .x), " by Age Group") |> str_wrap())
+      
+      # Return the plot and table as a list
+      list(plot = plotly_plot, freq_table = freq_table)
+    })
+  
+  # Create a new list to hold the interleaved output (plot first)
+  interleaved_output = unlist(lapply(output, function(x) {
+    list(x$plot, x$freq_table)
+  }), recursive = FALSE)
+  
+  # Convert list of divs to a single HTML output
+  final_output = do.call(tagList, interleaved_output)
+  
+  # Print the combined HTML output using browsable
+  browsable(final_output)
+  
+}
+
+
+# by gender
+satisfaction_dist_sex = function(columns, by = 20) {
+  # Interleave distribution plots and frequency tables
+  output = columns |>
+    map(~ {
+      # Create the distribution plot by age group
+      plot = ggplot(baseline_data_aggregated, aes(y = .data[[.x]], fill = child_sex)) + 
+        geom_histogram(aes(x = after_stat(count) / sum(after_stat(count)) * 100,
+                           text = paste("Percentage:", after_stat(count) / sum(after_stat(count)) * 100,
+                                        "<br>", .x, after_stat(y))),
+                       binwidth = by, position = "dodge", color = "black") +
+        scale_x_continuous(labels = scales::percent_format(scale = 1)) +
+        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(),
+             y = .x,
+             x = "Percentage") +
+        coord_flip() +
+        theme_minimal() +
+        theme(plot.title = element_text(size = 10))
+      
+      # Convert the ggplot to a plotly object
+      plotly_plot = ggplotly(plot, tooltip = "text")
+      
+      # Create frequency table
+      freq_table = baseline_data_aggregated |>
+        mutate(Value = cut(.data[[.x]], 
+                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10, 
+                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10, 
+                                        by = by), include.lowest = TRUE)) |>
+        group_by(child_sex, Value) |>
+        summarise(n = n()) |> ungroup() |>
+        mutate(
+          percentage = 100 * n / sum(n, na.rm = TRUE),
+          cumulative_percentage = round(cumsum(percentage), 2)) |>
+        mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
+                  extensions = 'Buttons', 
+                  caption = paste("Frequency Table for ", gsub("_", " ", .x), " by Sex") |> str_wrap())
+      
+      # Return the plot and table as a list
+      list(plot = plotly_plot, freq_table = freq_table)
+    })
+  
+  # Create a new list to hold the interleaved output (plot first)
+  interleaved_output = unlist(lapply(output, function(x) {
+    list(x$plot, x$freq_table)
+  }), recursive = FALSE)
+  
+  # Convert list of divs to a single HTML output
+  final_output = do.call(tagList, interleaved_output)
+  
+  # Print the combined HTML output using browsable
+  browsable(final_output)
+}
+
+
+# by age and sex
+satisfaction_dist_age_sex = function(columns, by = 25) {
+  # Interleave distribution plots and frequency tables for gender
+  output = columns |>
+    map(~ {
+      # Create frequency table for the variable and gender
+      freq_table = baseline_data_aggregated |>
+        mutate(Value = cut(.data[[.x]], 
+                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10, 
+                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10, 
+                                        by = by), include.lowest = TRUE)) |>
+        group_by(Value, age_group, child_sex) |>
+        summarise(
+          n = n()) |> ungroup() |>
+        mutate(
+          percentage = n / sum(n) * 100, 
+          cumulative_percentage = round(cumsum(percentage), 2)) |>
+        mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+        datatable(options = list(pageLength = 25, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
+                  extensions = 'Buttons', 
+                  caption = paste("Frequency Table for ", gsub("_", " ", .x), " by Age and Sex") |> str_wrap())
+      
+      # Return the plot and table as a list
+      list(freq_table = freq_table)
+    })
+  
+  # Create a new list to hold the interleaved output (plot first)
+  interleaved_output = unlist(lapply(output, function(x) {
+    list(x$freq_table)
+  }), recursive = FALSE)
+  
+  # Convert list of divs to a single HTML output
+  final_output = do.call(tagList, interleaved_output)
+  
+  # Print the combined HTML output using browsable
+  browsable(final_output)
+}
+```
+
+
+
+```{r protein_RDA, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c("home_protein_consumption_perc_of_RDA", "home_Digestible_protein_perc_of_RDA") 
+
+column_names |> satisfaction_dist_pop()
+column_names |> satisfaction_dist_age()
+column_names |> satisfaction_dist_sex()
+column_names |> satisfaction_dist_age_sex()
+```
+
+
+# 15. Average % of individual requirement covered in home consumption 
+
+```{r indiv_protein_req, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c("home_protein_consumption_perc_of_individual_protein_requirement", "home_Digestible_protein_perc_of_individual_requirement")
+
+column_names |> satisfaction_dist_pop()
+column_names |> satisfaction_dist_age()
+column_names |> satisfaction_dist_sex()
+column_names |> satisfaction_dist_age_sex()
+```
+
+
+
+# 16. Within the people who have an RDA gap at home, average and distribution of the gap
+
+
+```{r deficit_functions, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+deficits = function(data) {
+  data |>
+    summarise(
+      age_group = age_group,
+      child_sex = child_sex,
+      
+      rda_home_protein_deficit = home_protein_consumption_new - `RDA protein requirement`,
+      rda_home_digestible_protein_deficit = digestible_home_protein - `RDA protein requirement`,
+      
+      individual_home_protein_req_deficit = home_protein_consumption_new - individual_protein_requirement,
+      individual_digestible_home_protein_req_deficit = digestible_home_protein - individual_protein_requirement,
+      
+      across(paste0("total_daily_", AA_list, "_content"),
+             ~get(cur_column()) - `RDA protein requirement`,
+             .names = "{.col}_crude_RDA_deficit"),
+      
+      across(paste0("total_daily_", AA_list, "_content"),
+             ~get(cur_column()) - get(paste0("individual_", gsub("total_daily_|_content", "", cur_column()), "_requirement")),
+             .names = "{.col}_crude_individual_deficit"),
+      
+      
+      across(paste0("total_daily_", AA_list, "_digestible"),
+             ~get(cur_column()) - get(paste0("individual_", gsub("total_daily_|_digestible", "", cur_column()), "_requirement")),
+             .names = "{.col}_RDA_deficit"),
+      
+      across(paste0("total_daily_", AA_list, "_digestible"),
+             ~get(cur_column()) - get(paste0("individual_", gsub("total_daily_|_digestible", "", cur_column()), "_requirement")),
+             .names = "{.col}_individual_deficit")
+    )
+}
+
+## ________________________
+
+create_distribution_curves <- function(df = comparisons, column_names, group_var = NULL, fill_by_group = FALSE, plot_rows = 1, height = 400) {
+  
+  # Validate inputs
+  if (!all(column_names %in% names(df))) {
+    stop("Not all column_names found in dataframe")
+  }
+  
+  # Check if group_var is valid
+  use_groups <- !is.null(group_var) && 
+    length(group_var) == 1 && 
+    group_var %in% names(df)
+  
+  # Create plots for each numeric column
+  plots <- column_names |>
+    map(~ {
+      column_name <- .x
+      
+      # Create base plot
+      if (use_groups && fill_by_group) {
+        # Filled by group (overlapping densities)
+        plot <- ggplot(df, aes_string(x = column_name, fill = group_var)) +
+          geom_density(alpha = 0.5, position = "identity") +
+          scale_fill_brewer(palette = "Set2") +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 10),
+            axis.text.x = element_text(angle = 45, hjust = 1),
+            axis.title.x = element_text(size = 8),
+            strip.text = element_text(size = 8, face = "bold"),
+            legend.position = ifelse(fill_by_group,"right", "none")
+          )
+      } else {
+        # No grouping
+        plot <- ggplot(df, aes(x = .data[[column_name]])) +
+          geom_density(fill = "lightblue", alpha = 0.5) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 10),
+            axis.text.x = element_text(angle = 45, hjust = 1),
+            axis.title.x = element_text(size = 8),
+            strip.text = element_text(size = 8, face = "bold"),
+            legend.position = ifelse(fill_by_group,"right", "none")
+          )
+      }
+      
+      # Add common elements
+      plot <- plot +
+        geom_vline(xintercept = 0, color = "red", 
+                   linetype = "dashed", linewidth = 1) +  
+        geom_rug(alpha = 0.2) +
+        labs(
+          title = paste("Distribution of", gsub("_", " ", column_name)) |> 
+            str_wrap(width = 20),
+          x = gsub("_", " ", column_name) |> 
+            str_wrap(width = 30),
+          y = "Density"
+        ) 
+      
+      # Convert to plotly for interactivity
+      ggplotly(plot)
+    })
+  
+  # Arrange plots in a grid
+  subplot(plots, 
+          nrows = plot_rows, 
+          shareX = FALSE, 
+          titleX = TRUE, 
+          titleY = TRUE) |>
+    layout(
+      showlegend = TRUE, 
+      title = list(text = "Frequency Distribution Curves", y = 0.99),
+      margin = list(t = 50),
+      height = height
+    )
+}
+
+
+# population
+freq_fun_pop = function(column_names) {
+  column_names |>
+    map(
+      ~{
+        comparisons |> 
+          filter(!is.na(.x)) |>
+          summarise(
+            across(all_of(.x), ~ median(., na.rm = TRUE), .names = "{.col}_median"),
+            across(all_of(.x), ~ sd(., na.rm = TRUE), .names = "{.col}_stdev")) |>
+          mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+          datatable(options = list(pageLength = 15, 
+                                   scrollX = TRUE,
+                                   dom = 'Bfrtip'), filter = 'top',  
+                    extensions = 'Buttons',
+                    caption = paste("Distribution of ", .x)) 
+      }
+    )
+}
+
+# by age
+freq_fun_age = function(column_names) {
+  column_names |>
+    map(
+      ~{
+        comparisons |> 
+          filter(!is.na(.x)) |>
+          group_by(age_group) |>
+          summarise(
+            across(all_of(.x), ~ median(., na.rm = TRUE), .names = "{.col}_median"),
+            across(all_of(.x), ~ sd(., na.rm = TRUE), .names = "{.col}_stdev")) |>
+          ungroup() |>
+          mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+          datatable(options = list(pageLength = 15, 
+                                   scrollX = TRUE,
+                                   dom = 'Bfrtip'), filter = 'top',  
+                    extensions = 'Buttons',
+                    caption = paste("Distribution of ", .x, " by Age group")) 
+      }
+    )
+}
+
+# by sex
+freq_fun_sex = function(column_names) {
+  column_names |>
+    map(
+      ~{
+        comparisons |> 
+          filter(!is.na(.x)) |>
+          group_by(child_sex) |>
+          summarise(
+            across(all_of(.x), ~ median(., na.rm = TRUE), .names = "{.col}_median"),
+            across(all_of(.x), ~ sd(., na.rm = TRUE), .names = "{.col}_stdev")) |>
+          ungroup() |>
+          mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+          datatable(options = list(pageLength = 25, 
+                                   scrollX = TRUE,
+                                   dom = 'Bfrtip'), filter = 'top',  
+                    extensions = 'Buttons',
+                    caption = paste("Distribution of ", .x, " by Child Sex")) 
+      }
+    )
+}
+
+# by age and sex
+freq_fun_age_sex = function(column_names) {
+  column_names |>
+    map(
+      ~{
+        comparisons |> 
+          filter(!is.na(.x)) |>
+          group_by(age_group, child_sex) |>
+          summarise(
+            across(all_of(.x), ~ median(., na.rm = TRUE), .names = "{.col}_median"),
+            across(all_of(.x), ~ sd(., na.rm = TRUE), .names = "{.col}_stdev")) |>
+          ungroup() |>
+          mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+          datatable(options = list(pageLength = 25, 
+                                   scrollX = TRUE,
+                                   dom = 'Bfrtip'), filter = 'top',  
+                    extensions = 'Buttons',
+                    caption = paste("Distribution of ", .x, " by Age group and Child Sex")) 
+      }
+    )
+}
+```
+
+
+```{r deficits_plots, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+comparisons = deficits(baseline_data_aggregated) |>
+  filter(rda_home_protein_deficit < 0 | individual_home_protein_req_deficit < 0)
+
+##_____________________________
+p = tagList(
+  tags$div(
+    # style = "height:1500px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = c("rda_home_protein_deficit", "rda_home_digestible_protein_deficit"))))
+browsable(p)
+
+
+# table
+tables = c("rda_home_protein_deficit", "rda_home_digestible_protein_deficit") |> freq_fun_pop()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+
+# 17. Within the people who have an RDA gap at home, average and distribution of the gap by age
+
+```{r deficits_plots_2, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+p = tagList(
+  tags$div(
+    # style = "height:1500px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = c("rda_home_protein_deficit", "rda_home_digestible_protein_deficit"),
+        group_var = "age_group", fill_by_group = TRUE)))
+
+browsable(p)
+
+# table
+tables = c("rda_home_protein_deficit", "rda_home_digestible_protein_deficit") |> freq_fun_age()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+# 18. Within the people who have an RDA gap at home, average and distribution of the gap by sex
+
+```{r deficits_plots_3, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+p = tagList(
+  tags$div(
+    # style = "height:1500px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = c("rda_home_protein_deficit", "rda_home_digestible_protein_deficit"),
+        group_var = "child_sex", fill_by_group = TRUE)))
+
+browsable(p)
+
+# table
+tables = c("rda_home_protein_deficit", "rda_home_digestible_protein_deficit") |> freq_fun_sex()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+
+# 19. Within the people who have an RDA gap at home, average and distribution of the gap by age and sex
+
+```{r deficits_plots_4, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+# table
+tables = c("rda_home_protein_deficit", "rda_home_digestible_protein_deficit") |> freq_fun_age_sex()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+# 20. Within the people who have an individual requirement gap at home, average and distribution of the gap
+
+```{r deficits_plots_5, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+p = tagList(
+  tags$div(
+    # style = "height:1500px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = c("individual_home_protein_req_deficit", "individual_digestible_home_protein_req_deficit"),
+        group_var = NULL, fill_by_group = FALSE)))
+
+browsable(p)
+
+# table
+tables = c("individual_home_protein_req_deficit", "individual_digestible_home_protein_req_deficit") |> freq_fun_pop()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+# 21. Within the people who have an individual requirement gap at home, average and distribution of the gap by age
+
+```{r deficits_plots_6, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+p = tagList(
+  tags$div(
+    # style = "height:1500px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = c("individual_home_protein_req_deficit", "individual_digestible_home_protein_req_deficit"),
+        group_var = "age_group", fill_by_group = TRUE)))
+
+browsable(p)
+
+# table
+tables = c("individual_home_protein_req_deficit", "individual_digestible_home_protein_req_deficit") |> freq_fun_age()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+# 22. Within the people who have an individual requirement gap at home, average and distribution of the gap by sex
+
+```{r deficits_plots_7, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+p = tagList(
+  tags$div(
+    # style = "height:1500px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = c("individual_home_protein_req_deficit", "individual_digestible_home_protein_req_deficit"),
+        group_var = "child_sex", fill_by_group = TRUE)))
+
+browsable(p)
+
+# table
+tables = c("individual_home_protein_req_deficit", "individual_digestible_home_protein_req_deficit") |> freq_fun_sex()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+
+# 23. Within the people who have an individual requirement gap at home, average and distribution of the gap by age and sex
+
+```{r deficits_plots_8, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+# table
+tables = c("individual_home_protein_req_deficit", "individual_digestible_home_protein_req_deficit") |> freq_fun_age_sex()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+
+# 24. % of people meeting RDA with Amino Acids from Home (Crude and Digestible)
+
+```{r student_indiv_AA_req, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+columns = c(
+  paste0(AA_list, "_perc_of_RDA"),
+  paste0(AA_list, "_digestible_perc_of_RDA"))
+
+students_RDA_AA_met = baseline_data_aggregated |>
+  summarise(
+    across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+  ungroup() |>
+  t() |> as.data.frame() |> rename(`% student meeting amino acid requirement` = V1)
+students_RDA_AA_met  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement from crude home protein consumption")
+
+# by age group
+students_RDA_AA_met_by_age_group = baseline_data_aggregated |>
+  group_by(age_group) |>
+  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+  ungroup() |>
+  t() |> as.data.frame() 
+students_RDA_AA_met_by_age_group  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by age group from crude home protein consumption")
+
+# by gender
+students_RDA_AA_met_by_gender = baseline_data_aggregated |>
+  group_by(child_sex) |>
+  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+  ungroup() |>
+  t() |> as.data.frame() 
+students_RDA_AA_met_by_gender  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by gender from crude home protein consumption")
+
+# by age group and gender
+students_RDA_AA_met_by_age_group_gender = baseline_data_aggregated |>
+  group_by(age_group, child_sex) |>
+  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+  ungroup() |>
+  t() |> as.data.frame() 
+students_RDA_AA_met_by_age_group_gender  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by age group and gender from crude home protein consumption")
+```
+
+
+
+
+# 25. % of people meeting individual requirements from Amino Acids
+
+```{r student_indiv_AA_req_2, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+columns = c(
+  paste0(AA_list, "_perc_of_individual_requirement"),
+  paste0(AA_list, "_digestible_perc_of_individual_requirement"))
+
+
+students_individual_AA_met = baseline_data_aggregated |>
+  select(participant_id, contains(columns)) |>
+  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+  ungroup() |>
+  t() |> as.data.frame() |> rename(`% student meeting amino acid requirement` = V1)
+students_individual_AA_met  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement from crude home protein consumption")
+
+# by age group
+students_individual_AA_met_by_age_group = baseline_data_aggregated |>
+  group_by(age_group) |>
+  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+  ungroup() |>
+  t() |> as.data.frame() 
+students_individual_AA_met_by_age_group  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by age group from crude home protein consumption")
+
+# by gender
+students_individual_AA_met_by_gender = baseline_data_aggregated |>
+  group_by(child_sex) |>
+  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+  ungroup() |>
+  t() |> as.data.frame() 
+students_individual_AA_met_by_gender  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by gender from crude home protein consumption")
+
+# by age group and gender
+students_individual_AA_met_by_age_group_gender = baseline_data_aggregated |>
+  group_by(age_group, child_sex) |>
+  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+  ungroup() |> 
+  t() |> as.data.frame() 
+students_individual_AA_met_by_age_group_gender  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by age group and gender from crude home protein consumption")
+```
+
+
+# 26. Average % of RDA covered in home Amino acid consumption 
+
+```{r amino_acid_req, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+columns = c(
+  paste0(AA_list, "_perc_of_RDA"),
+  paste0(AA_list, "_digestible_perc_of_RDA"))
+
+columns |> satisfaction_dist_pop(by = 10)
+columns |> satisfaction_dist_age(by = 10)
+columns |> satisfaction_dist_sex(by = 10)
+columns |> satisfaction_dist_age_sex(by = 10)
+```
+
+# 27. Average % of individual requirement covered in home Amino acid consumption 
+
+```{r amino_acid_req_2, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+columns = c(
+  paste0(AA_list, "_perc_of_individual_requirement"),
+  paste0(AA_list, "_digestible_perc_of_individual_requirement"))
+
+columns |> satisfaction_dist_pop(by = 10)
+columns |> satisfaction_dist_age(by = 10)
+columns |> satisfaction_dist_sex(by = 10)
+columns |> satisfaction_dist_age_sex(by = 10)
+```
+
+
+# 28. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap
+
+
+```{r deficits_plots_9, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c(
+  paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
+  paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+
+##_____________________________
+p = tagList(
+  tags$div(
+    style = "height:1200px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = column_names, plot_rows = 5,  height = 1200)))
+browsable(p)
+
+
+# table
+tables = column_names |> freq_fun_pop()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+
+# 29. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by age
+
+
+```{r deficits_plots_10, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c(
+  paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
+  paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+
+p = tagList(
+  tags$div(
+    style = "height:1200px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = column_names, plot_rows = 5,  height = 1200,
+        group_var = "age_group", fill_by_group = TRUE)))
+
+browsable(p)
+
+# table
+tables = column_names |> freq_fun_age()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+# 30. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by sex
+
+
+```{r deficits_plots_11, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c(
+  paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
+  paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+
+p = tagList(
+  tags$div(
+    style = "height:1200px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = column_names, plot_rows = 5, height = 1200,
+        group_var = "child_sex", fill_by_group = TRUE)))
+browsable(p)
+
+# table
+tables = column_names |> freq_fun_sex()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+# 31. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by age and sex
+
+
+```{r deficits_plots_12, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c(
+  paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
+  paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+
+# table
+tables = column_names |> freq_fun_age_sex()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+
+
+# 32. Within the people who have an Individual Amino acid req gap at home, average and distribution of the gap
+
+
+```{r deficits_plots_13, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c(
+  paste0("total_daily_", AA_list, "_content_crude_individual_deficit"), 
+  paste0("total_daily_", AA_list, "_digestible_individual_deficit"))
+
+##_____________________________
+p = tagList(
+  tags$div(
+    style = "height:1200px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = column_names,
+        plot_rows = 6, height = 1200)))
+browsable(p)
+
+
+# table
+tables = column_names |> freq_fun_pop()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+
+# 33. Within the people who have an Individual Amino acid gap at home, average and distribution of the gap by age
+
+
+```{r deficits_plots_14, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c(
+  paste0("total_daily_", AA_list, "_content_crude_individual_deficit"), 
+  paste0("total_daily_", AA_list, "_digestible_individual_deficit"))
+
+p = tagList(
+  tags$div(
+    style = "height:1200px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = column_names,
+        group_var = "age_group", fill_by_group = TRUE,
+        plot_rows = 6, height = 1200)))
+browsable(p)
+
+# table
+tables = column_names |> freq_fun_age()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+# 34. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by sex
+
+
+```{r deficits_plots_15, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c(
+  paste0("total_daily_", AA_list, "_content_crude_individual_deficit"), 
+  paste0("total_daily_", AA_list, "_digestible_individual_deficit"))
+
+p = tagList(
+  tags$div(
+    style = "height:1200px",
+    comparisons |> 
+      create_distribution_curves(
+        column_names = column_names,
+        group_var = "child_sex", fill_by_group = TRUE,
+        plot_rows = 6, height = 1200)))
+browsable(p)
+
+
+# table
+tables = column_names |> freq_fun_sex()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```
+
+# 35. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by age and sex
+
+
+```{r deficits_plots_16, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
+column_names = c(
+  paste0("total_daily_", AA_list, "_content_crude_individual_deficit"), 
+  paste0("total_daily_", AA_list, "_digestible_individual_deficit"))
+
+# table
+tables = column_names |> freq_fun_age_sex()
+
+final_output = do.call(tagList, tables)
+browsable(final_output)
+```

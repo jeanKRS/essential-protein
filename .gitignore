@@ -1,0 +1,14 @@
+*.zip
+*.csv
+*.pdf
+*.docx
+*.xlsx
+/Archive 3/
+/USDA_amino_acids/
+/final_results_files/
+/essential_proteins_2_files/
+/data_from_pdf/
+essential_proteins_2.Rmd
+essential_proteins.Rmd
+essential_proteins.html
+essential_proteins_2.html

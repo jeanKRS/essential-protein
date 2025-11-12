@@ -1,0 +1,101 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+# Extracting data from KFT
+
+The Amino acid composition data are between the actual *pages 193 - 194*.
+
+The *extract_areas* function allows us to select the table area to extract
+
+```{r data_1_e, message=FALSE, collapse=TRUE,  warning=FALSE, results='asis', cache=FALSE}
+library(dplyr)
+library(readr)
+library(tidyr)
+library(here)
+library(purrr)
+library(stringr)
+library(rJava)
+library(tabulapdf)
+library(shiny)
+library(miniUI)
+
+
+# Extract AA_content_table from the PDF pages 193:197
+KFCT_source = "Kenya Food Composition Table.pdf"
+AA_content_table = extract_areas(KFCT_source, pages = 193:194)
+AA_content_table = AA_content_table |>
+  map(~{
+    names(.x)[-(1:2)] = .x[2, -(1:2)]
+    .x = .x[-(1:3), ] |>
+      as_tibble()
+  })
+
+AA_content_table = AA_content_table |>
+  map(~{
+    .x = .x |>
+      
+      mutate(
+        `Food name in English` = case_when(
+          `Food name in English` == "raw" ~ NA_character_,
+          `Food name in English` == "packaged, raw" ~ NA_character_,
+          str_detect(`Food name in English`, "packaged\\s*\\),\\s*raw") ~ NA_character_,
+          `Food name in English` == "peeled, raw" ~ NA_character_,
+          `Food name in English` == "leaves, picked, raw" ~ NA_character_,
+          `Food name in English` == "stripes, raw" ~ NA_character_,
+          `Food name in English` == "mursik" ~ NA_character_,
+          `Food name in English` == "meat&skin, raw" ~ NA_character_,
+          `Food name in English` == "whole, dry, raw" ~ NA_character_,
+          `Food name in English` == "grain, fresh, raw" ~ NA_character_,
+          `Food name in English` == "packaged, raw" ~ NA_character_,
+          `Food name in English` == "grain, dry, raw" ~ NA_character_,
+          `Food name in English` == "fortified/sifted packaged" ~ NA_character_,
+          `Food name in English` == "variety, peeled, raw" ~ NA_character_,
+          `Food name in English` == "unsalted, dry, raw" ~ NA_character_,
+          `Food name in English` == "w/o bone, meat&skin, raw" ~ NA_character_,
+          `Food name in English` == "unsalted" ~ NA_character_,
+          `Food name in English` == "bones, raw" ~ NA_character_,
+          `Food name in English` == "dried" ~ NA_character_,
+          `Food name in English` == "skin, raw" ~ NA_character_,
+          `Food name in English` == "with white stripes, raw" ~ NA_character_,
+          `Food name in English` == "fleshed, peeled, raw" ~ NA_character_,
+          `Food name in English` == "(Lala - Industrial)" ~ NA_character_,
+          `Food name in English` == "(Lala - mursik)" ~ NA_character_,
+          `Food name in English` == "fortified/sifted packaged)," ~ NA_character_,
+          `Food name in English` == "leaves, raw" ~ NA_character_,
+          `Food name in English` == "flesh, raw" ~ NA_character_,
+          `Food name in English` == "picked leaves, raw" ~ NA_character_,
+          `Food name in English` == "Industrial)" ~ NA_character_,
+          `Food name in English` == "mursik)" ~ NA_character_,
+          TRUE ~ `Food name in English`
+        )) |>
+      
+      mutate(across(everything(), ~ replace(., is.na(.), NA))) %>%        # Keep NA in place
+      lapply(function(col) {
+        na.omit(col)  # Remove NA values from each column
+      }) |> do.call(what = cbind) |>
+      as_tibble()
+    
+    return(.x)
+  }) |> 
+  
+  bind_rows() |>
+  rename(Histidine = HIS,
+         Isoleucin = ILE, 
+         Leucine = LEU,
+         Lysine = LYS,
+         Methionine = MET,
+         Phenylalanine = PHE,
+         Threonine = THR,
+         Tryptophan = TRP,
+         Valine = VAL) |>
+  
+  select(c("Food name in English", AA_list))
+
+write_csv(AA_content_table, file = here("Kenya Food Composition Table Extracted.csv"))
+
+## NOTE: first "Milk, cow, whole, fermented"  ## second are mursik (Update appropriately) and update baseline data to separate them plus yoghurt
+
+```
+

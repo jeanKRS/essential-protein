@@ -1,0 +1,56 @@
+---
+title: "NOTES"
+format: html
+---
+
+# Amino Acids
+
+- `AA_content` from KFCT table is expressed on a *mg per 100 gram Fresh weight*
+
+
+```{r}
+# Interleave distribution plots and frequency tables for population
+percent_of_X_distributions = function(columns, fill = "lightblue") {
+  output = columns |>
+    map(~ {
+      # Create the distribution plot
+      plot = ggplot(baseline_data_aggregated, aes_string(x = .x)) +
+        geom_histogram(aes(y = ..count.. / sum(..count..) * 100),  # Convert count to percentage
+                       fill = if(!is.null(fill)) "lightblue", color = "black") +
+        labs(title = paste("Distribution of", gsub("_", " ", .x), ifelse(is.null(fill), "", paste(" By ", fill))) |> str_wrap(),
+             x = .x,
+             y = "Percentage") +
+        scale_y_continuous(labels = scales::percent_format(scale = 1)) +  # Format y-axis as percentage
+        theme_minimal() +
+        theme(plot.title = element_text(size = 8)) 
+
+      # Convert the ggplot to a plotly object
+      plotly_plot = ggplotly(plot)
+
+      # Create frequency table
+      freq_table = baseline_data_aggregated  |> 
+        count(!!sym(.x), !!sym(fill))
+        mutate(percentage = n / sum(n) * 100, cumulative_percentage = round(cumsum(percentage), 2)) |>
+        rename(Value = !!sym(.x)) |>
+        select(!!sym(fill), Value, n, percentage, cumulative_percentage) |>
+        arrange(Value, !!sym(fill)) |>
+        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
+                  extensions = 'Buttons', 
+                  caption = paste("Frequency Table for", gsub("_", " ", .x), ifelse(is.null(fill), "", paste(" By ", fill))) |> str_wrap())
+
+      # Return the plot and table as a list
+      list(plot = plotly_plot, freq_table = freq_table)
+    })
+
+  # Create a new list to hold the interleaved output (plot first)
+  interleaved_output = unlist(lapply(output, function(x) {
+    list(x$plot, x$freq_table)
+  }), recursive = FALSE)
+
+  # Convert list of divs to a single HTML output
+  final_output = do.call(tagList, interleaved_output)
+
+  # Print the combined HTML output using browsable
+  browsable(final_output)
+}
+```
