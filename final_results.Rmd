@@ -1584,11 +1584,41 @@ baseline_data_aggregated = daily_totals_fun(merged_data = merged_data)
 ```
 
 
-15. *ingredient_name_simplified*: created from *ingredient_name* to facilitate better matching with protein digestibility and AA content datasets (*NOTE:* an intermediary column not used in matching)
-16. *ingredient_name_simplified_digestibility*: created from *ingredient_name_simplified* optimizing it for matching with protein digestibility
-17. *ingredient_name_simplified_AA*: created from *ingredient_name_simplified* optimizing it for matching with AA content
-18. *Protein_Source_simplified*: extract from the *Protein_Source* column in protein digestibility data for simplicity matching with *ingredient_name_simplified_digestibility*
-19. *food_name_simplified*: extract from the *Food name in English* amino acid contents data for simplicity matching with *ingredient_name_simplified_AA*
+16. *ingredient_name_simplified*: created from *ingredient_name* to facilitate better matching with protein digestibility and AA content datasets (*NOTE:* an intermediary column not used in matching)
+17. *ingredient_name_simplified_digestibility*: created from *ingredient_name_simplified* optimizing it for matching with protein digestibility
+18. *ingredient_name_simplified_AA*: created from *ingredient_name_simplified* optimizing it for matching with AA content
+19. *Protein_Source_simplified*: extract from the *Protein_Source* column in protein digestibility data for simplicity matching with *ingredient_name_simplified_digestibility*
+20. *food_name_simplified*: extract from the *Food name in English* amino acid contents data for simplicity matching with *ingredient_name_simplified_AA*
+
+21. *age_group*: Categorical age grouping created from *child_age*. Categories: "4-<7", "7-<10", "10-<13", "13+"
+
+22. *animal_protein_presence*: Indicator for protein source type. Values: "animal based" if ingredient contains milk, beef, eggs, or fish; "plant based" otherwise
+
+23. *%_Protein*: Percentage of protein in consumed volume. Formula: $\frac{100 \times Protein\ (g)}{volume\_consumed}$
+
+24. *protein_perc_corrected*: Corrected protein percentage with outliers replaced by the median protein percentage
+
+25. *Protein (g)_corrected*: Recalculated protein amount based on corrected percentage. Formula: $\frac{protein\_perc\_corrected}{100} \times volume\_consumed$
+
+26. *volume_consumed*: Volume of food consumed in grams. Formula: $volume\_calc \times 100$
+
+27. *Protein_Source*: Original protein source name from the protein digestibility reference data
+
+28. *Protein_digestibility*: True fecal digestibility coefficient for protein sources (values between 0 and 1). Set to 1 if missing data
+
+29. *Food name in English*: Food item name from the amino acid composition reference table
+
+30. *Histidine_per_100g*, *Isoleucin_per_100g*, *Leucine_per_100g*, *Lysine_per_100g*, *Methionine_per_100g*, *Phenylalanine_per_100g*, *Threonine_per_100g*, *Tryptophan_per_100g*, *Valine_per_100g*: Amino acid composition in mg per 100g of ingredient (from reference data)
+
+31. *protein_req*: WHO protein requirement in g/kg body weight by age group
+
+32. *Histidine_req*, *Isoleucine_req*, *Leucine_req*, *Lysine_req*, *Methionine_req*, *Phenylalanine_req*, *Threonine_req*, *Tryptophan_req*, *Valine_req*: WHO amino acid requirements in mg/kg body weight by age group
+
+33. *has_animal_protein*: Character indicator showing whether participant consumed any animal-based protein. Values: "TRUE" or "FALSE"
+
+34. *total_daily_Histidine_content*, *total_daily_Isoleucin_content*, *total_daily_Leucine_content*, *total_daily_Lysine_content*, *total_daily_Methionine_content*, *total_daily_Phenylalanine_content*, *total_daily_Threonine_content*, *total_daily_Tryptophan_content*, *total_daily_Valine_content*: Total daily amino acid content (crude) in mg per participant. Formula: $\sum(AA\_content)$ per participant
+
+35. *total_daily_Histidine_digestible*, *total_daily_Isoleucin_digestible*, *total_daily_Leucine_digestible*, *total_daily_Lysine_digestible*, *total_daily_Methionine_digestible*, *total_daily_Phenylalanine_digestible*, *total_daily_Threonine_digestible*, *total_daily_Tryptophan_digestible*, *total_daily_Valine_digestible*: Total daily digestible amino acid content in mg per participant. Formula: $\sum(AA\_digestible)$ per participant
 
 
 # 7. RDA vs. individual requirement
