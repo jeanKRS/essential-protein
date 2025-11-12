@@ -2174,14 +2174,20 @@ create_distribution_curves <- function(df = comparisons, column_names, group_var
       
       # Add common elements
       plot <- plot +
-        geom_vline(xintercept = 0, color = "red", 
-                   linetype = "dashed", linewidth = 1) +  
+        geom_vline(xintercept = 0, color = "red",
+                   linetype = "dashed", linewidth = 1) +
+        annotate("text", x = min(df[[column_name]], na.rm = TRUE),
+                 y = Inf, label = "DEFICIT",
+                 hjust = 0, vjust = 1.5, color = "red", size = 3, fontface = "bold") +
+        annotate("text", x = max(df[[column_name]], na.rm = TRUE),
+                 y = Inf, label = "SURPLUS",
+                 hjust = 1, vjust = 1.5, color = "blue", size = 3, fontface = "bold") +
         geom_rug(alpha = 0.2) +
         labs(
-          title = paste("Distribution of", gsub("_", " ", column_name)) |> 
+          title = paste("Distribution of", gsub("_", " ", column_name)) |>
             str_wrap(width = 20),
-          x = gsub("_", " ", column_name) |> 
-            str_wrap(width = 30),
+          x = paste(gsub("_", " ", column_name), "(Negative = Deficit, Positive = Surplus)") |>
+            str_wrap(width = 40),
           y = "Density"
         ) 
       
@@ -2209,17 +2215,24 @@ freq_fun_pop = function(column_names) {
   column_names |>
     map(
       ~{
-        comparisons |> 
+        result = comparisons |>
           filter(!is.na(.x)) |>
           summarise(
             across(all_of(.x), ~ median(., na.rm = TRUE), .names = "{.col}_median"),
             across(all_of(.x), ~ sd(., na.rm = TRUE), .names = "{.col}_stdev")) |>
-          mutate(across(where(is.numeric), ~ round(.x, 2))) |>
-          datatable(options = list(pageLength = 15, 
+          mutate(across(where(is.numeric), ~ round(.x, 2)))
+
+        # Add interpretation column
+        median_col = paste0(.x, "_median")
+        result = result |>
+          mutate(Interpretation = ifelse(get(median_col) < 0, "DEFICIT", "SURPLUS"))
+
+        result |>
+          datatable(options = list(pageLength = 15,
                                    scrollX = TRUE,
-                                   dom = 'Bfrtip'), filter = 'top',  
+                                   dom = 'Bfrtip'), filter = 'top',
                     extensions = 'Buttons',
-                    caption = paste("Distribution of ", .x)) 
+                    caption = paste("Distribution of ", .x, "(Negative = Deficit, Positive = Surplus)"))
       }
     )
 }
@@ -2229,7 +2242,8 @@ freq_fun_age = function(column_names) {
   column_names |>
     map(
       ~{
-        comparisons |> 
+        median_col = paste0(.x, "_median")
+        comparisons |>
           filter(!is.na(.x)) |>
           group_by(age_group) |>
           summarise(
@@ -2237,11 +2251,12 @@ freq_fun_age = function(column_names) {
             across(all_of(.x), ~ sd(., na.rm = TRUE), .names = "{.col}_stdev")) |>
           ungroup() |>
           mutate(across(where(is.numeric), ~ round(.x, 2))) |>
-          datatable(options = list(pageLength = 15, 
+          mutate(Interpretation = ifelse(get(median_col) < 0, "DEFICIT", "SURPLUS")) |>
+          datatable(options = list(pageLength = 15,
                                    scrollX = TRUE,
-                                   dom = 'Bfrtip'), filter = 'top',  
+                                   dom = 'Bfrtip'), filter = 'top',
                     extensions = 'Buttons',
-                    caption = paste("Distribution of ", .x, " by Age group")) 
+                    caption = paste("Distribution of ", .x, " by Age group (Negative = Deficit, Positive = Surplus)"))
       }
     )
 }
@@ -2251,7 +2266,8 @@ freq_fun_sex = function(column_names) {
   column_names |>
     map(
       ~{
-        comparisons |> 
+        median_col = paste0(.x, "_median")
+        comparisons |>
           filter(!is.na(.x)) |>
           group_by(child_sex) |>
           summarise(
@@ -2259,11 +2275,12 @@ freq_fun_sex = function(column_names) {
             across(all_of(.x), ~ sd(., na.rm = TRUE), .names = "{.col}_stdev")) |>
           ungroup() |>
           mutate(across(where(is.numeric), ~ round(.x, 2))) |>
-          datatable(options = list(pageLength = 25, 
+          mutate(Interpretation = ifelse(get(median_col) < 0, "DEFICIT", "SURPLUS")) |>
+          datatable(options = list(pageLength = 25,
                                    scrollX = TRUE,
-                                   dom = 'Bfrtip'), filter = 'top',  
+                                   dom = 'Bfrtip'), filter = 'top',
                     extensions = 'Buttons',
-                    caption = paste("Distribution of ", .x, " by Child Sex")) 
+                    caption = paste("Distribution of ", .x, " by Child Sex (Negative = Deficit, Positive = Surplus)"))
       }
     )
 }
@@ -2273,7 +2290,8 @@ freq_fun_age_sex = function(column_names) {
   column_names |>
     map(
       ~{
-        comparisons |> 
+        median_col = paste0(.x, "_median")
+        comparisons |>
           filter(!is.na(.x)) |>
           group_by(age_group, child_sex) |>
           summarise(
@@ -2281,11 +2299,12 @@ freq_fun_age_sex = function(column_names) {
             across(all_of(.x), ~ sd(., na.rm = TRUE), .names = "{.col}_stdev")) |>
           ungroup() |>
           mutate(across(where(is.numeric), ~ round(.x, 2))) |>
-          datatable(options = list(pageLength = 25, 
+          mutate(Interpretation = ifelse(get(median_col) < 0, "DEFICIT", "SURPLUS")) |>
+          datatable(options = list(pageLength = 25,
                                    scrollX = TRUE,
-                                   dom = 'Bfrtip'), filter = 'top',  
+                                   dom = 'Bfrtip'), filter = 'top',
                     extensions = 'Buttons',
-                    caption = paste("Distribution of ", .x, " by Age group and Child Sex")) 
+                    caption = paste("Distribution of ", .x, " by Age group and Child Sex (Negative = Deficit, Positive = Surplus)"))
       }
     )
 }
