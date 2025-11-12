@@ -1936,9 +1936,9 @@ satisfaction_dist_age = function(columns, by = 20) {
       
       # Create frequency table
       freq_table = baseline_data_aggregated |>
-        mutate(Value = cut(.data[[.x]], 
-                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10, 
-                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10, 
+        mutate(Value = cut(.data[[.x]],
+                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10,
+                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10,
                                         by = by), include.lowest = TRUE)) |>
         group_by(age_group, Value) |>
         summarise(n = n()) |> ungroup() |>
@@ -1946,8 +1946,9 @@ satisfaction_dist_age = function(columns, by = 20) {
           percentage = 100 * n / sum(n, na.rm = TRUE),
           cumulative_percentage = round(cumsum(percentage), 2)) |>
         mutate(across(where(is.numeric), ~ round(.x, 2))) |>
-        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
-                  extensions = 'Buttons', 
+        rename(!!.x := Value) |>
+        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',
+                  extensions = 'Buttons',
                   caption = paste("Frequency Table for ", gsub("_", " ", .x), " by Age Group") |> str_wrap())
       
       # Return the plot and table as a list
@@ -1992,9 +1993,9 @@ satisfaction_dist_sex = function(columns, by = 20) {
       
       # Create frequency table
       freq_table = baseline_data_aggregated |>
-        mutate(Value = cut(.data[[.x]], 
-                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10, 
-                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10, 
+        mutate(Value = cut(.data[[.x]],
+                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10,
+                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10,
                                         by = by), include.lowest = TRUE)) |>
         group_by(child_sex, Value) |>
         summarise(n = n()) |> ungroup() |>
@@ -2002,8 +2003,9 @@ satisfaction_dist_sex = function(columns, by = 20) {
           percentage = 100 * n / sum(n, na.rm = TRUE),
           cumulative_percentage = round(cumsum(percentage), 2)) |>
         mutate(across(where(is.numeric), ~ round(.x, 2))) |>
-        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
-                  extensions = 'Buttons', 
+        rename(!!.x := Value) |>
+        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',
+                  extensions = 'Buttons',
                   caption = paste("Frequency Table for ", gsub("_", " ", .x), " by Sex") |> str_wrap())
       
       # Return the plot and table as a list
@@ -2030,19 +2032,20 @@ satisfaction_dist_age_sex = function(columns, by = 25) {
     map(~ {
       # Create frequency table for the variable and gender
       freq_table = baseline_data_aggregated |>
-        mutate(Value = cut(.data[[.x]], 
-                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10, 
-                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10, 
+        mutate(Value = cut(.data[[.x]],
+                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10,
+                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10,
                                         by = by), include.lowest = TRUE)) |>
         group_by(Value, age_group, child_sex) |>
         summarise(
           n = n()) |> ungroup() |>
         mutate(
-          percentage = n / sum(n) * 100, 
+          percentage = n / sum(n) * 100,
           cumulative_percentage = round(cumsum(percentage), 2)) |>
         mutate(across(where(is.numeric), ~ round(.x, 2))) |>
-        datatable(options = list(pageLength = 25, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
-                  extensions = 'Buttons', 
+        rename(!!.x := Value) |>
+        datatable(options = list(pageLength = 25, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',
+                  extensions = 'Buttons',
                   caption = paste("Frequency Table for ", gsub("_", " ", .x), " by Age and Sex") |> str_wrap())
       
       # Return the plot and table as a list
