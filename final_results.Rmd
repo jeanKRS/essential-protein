@@ -645,12 +645,24 @@ baseline_data = baseline_data |>
 # Visualize the results
 p = ggplot(baseline_data, aes(x = `Protein (g)_corrected`)) +
   geom_histogram(aes(y = after_stat(count)/sum(after_stat(count)) * 100),
-                 fill = "lightblue", 
-                 color = "black", binwidth = 2) +
-  theme_minimal() +
-  ggtitle("Distribution of corrected protein (g) values"  |> str_wrap()) +
-  xlab("Protein (g)") + ylab("Percentage") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), plot.title = element_text(size = 10))   # Angle x-axis tick labels at 90 degrees
+                 fill = "#4A90E2", color = "black", binwidth = 2, size = 0.7, alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+  labs(title = "Distribution of Corrected Protein (g) Values",
+       x = "Protein (g)",
+       y = "Percentage") +
+  theme_minimal(base_size = 14, base_family = "sans") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 10)),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),
+    axis.line = element_line(color = "black", size = 0.5),
+    panel.grid.major = element_line(color = "gray90", size = 0.3),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.7),
+    plot.margin = margin(10, 10, 10, 10)
+  )
 
 # Convert ggplot object to plotly object
 plotly_obj = ggplotly(p)
@@ -686,11 +698,30 @@ baseline_data |>
 # Visualize the results
 p = ggplot(baseline_data, aes(x = `Protein (g)_corrected`, fill = age_group)) +
   geom_histogram(aes(y = after_stat(count)/sum(after_stat(count)) * 100),
-                 color = "black", binwidth = 2, position = "dodge") +
-  theme_minimal() +
-  ggtitle("Distribution of corrected protein (g) values by age group"  |> str_wrap()) +
-  xlab("Protein (g)") + ylab("Percentage") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), plot.title = element_text(size = 10))   # Angle x-axis tick labels at 90 degrees
+                 color = "black", binwidth = 2, position = "dodge", size = 0.7, alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Distribution of Corrected Protein (g) Values by Age Group",
+       x = "Protein (g)",
+       y = "Percentage",
+       fill = "Age Group") +
+  theme_minimal(base_size = 14, base_family = "sans") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 10)),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),
+    axis.line = element_line(color = "black", size = 0.5),
+    panel.grid.major = element_line(color = "gray90", size = 0.3),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.7),
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    legend.background = element_rect(fill = "white", color = "black", size = 0.3),
+    plot.margin = margin(10, 10, 10, 10)
+  )
 
 # Convert ggplot object to plotly object
 plotly_obj = ggplotly(p)
@@ -1703,12 +1734,30 @@ joined |>
 # Visualize the results
 p = ggplot(baseline_data_aggregated, aes(x = home_protein_consumption_new, fill = has_animal_protein)) +
   geom_histogram(aes(y = after_stat(count)/sum(after_stat(count)) * 100),
-                 # fill = "lightblue", 
-                 color = "black", position = "dodge", binwidth = 10) +
-  theme_minimal() +
-  ggtitle("Distribution of home protein consumption"  |> str_wrap()) +
-  xlab("Home Protein Consumption (g)") + ylab("Percentage") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), plot.title = element_text(size = 10))   # Angle x-axis tick labels at 90 degrees
+                 color = "black", position = "dodge", binwidth = 10, size = 0.7, alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+  scale_fill_brewer(palette = "Set1", labels = c("FALSE" = "No Animal Protein", "TRUE" = "Has Animal Protein")) +
+  labs(title = "Distribution of Home Protein Consumption",
+       x = "Home Protein Consumption (g)",
+       y = "Percentage",
+       fill = "Animal Protein") +
+  theme_minimal(base_size = 14, base_family = "sans") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 10)),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),
+    axis.line = element_line(color = "black", size = 0.5),
+    panel.grid.major = element_line(color = "gray90", size = 0.3),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.7),
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    legend.background = element_rect(fill = "white", color = "black", size = 0.3),
+    plot.margin = margin(10, 10, 10, 10)
+  )
 # Convert ggplot object to plotly object
 plotly_obj = ggplotly(p)
 
@@ -1883,13 +1932,24 @@ satisfaction_dist_pop = function(columns, by = 10) {
       # Create the distribution plot
       plot = ggplot(baseline_data_aggregated, aes(.data[[.x]])) +
         geom_histogram(aes(y = after_stat(count)/sum(after_stat(count)) * 100),
-                       binwidth = by, fill = "lightblue", color = "black") +
-        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(),
-             x = .x,
+                       binwidth = by, fill = "#4A90E2", color = "black", size = 0.7, alpha = 0.8) +
+        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(width = 40),
+             x = gsub("_", " ", .x),
              y = "Percentage") +
         scale_y_continuous(labels = scales::percent_format(scale = 1)) +
-        theme_minimal() +
-        theme(plot.title = element_text(size = 10))  
+        theme_minimal(base_size = 14, base_family = "sans") +
+        theme(
+          plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 10)),
+          axis.text.x = element_text(size = 12, color = "black"),
+          axis.text.y = element_text(size = 12, color = "black"),
+          axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+          axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),
+          axis.line = element_line(color = "black", size = 0.5),
+          panel.grid.major = element_line(color = "gray90", size = 0.3),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.7),
+          plot.margin = margin(10, 10, 10, 10)
+        )  
       
       # Convert the ggplot to a plotly object
       plotly_plot = ggplotly(plot)
@@ -1918,18 +1978,35 @@ satisfaction_dist_age = function(columns, by = 20) {
   output = columns |>
     map(~ {
       # Create the distribution plot by age group
-      plot = ggplot(baseline_data_aggregated, aes(y = .data[[.x]], fill = age_group)) + 
+      plot = ggplot(baseline_data_aggregated, aes(y = .data[[.x]], fill = age_group)) +
         geom_histogram(aes(x = after_stat(count) / sum(after_stat(count)) * 100,
                            text = paste("Percentage:", after_stat(count) / sum(after_stat(count)) * 100,
                                         "<br>", .x, after_stat(y))),
-                       binwidth = by, position = "dodge", color = "black") +
+                       binwidth = by, position = "dodge", color = "black", size = 0.7, alpha = 0.8) +
         scale_x_continuous(labels = scales::percent_format(scale = 1)) +
-        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(),
-             y = .x,
-             x = "Percentage") +
+        scale_fill_brewer(palette = "Set2") +
+        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(width = 40),
+             y = gsub("_", " ", .x),
+             x = "Percentage",
+             fill = "Age Group") +
         coord_flip() +
-        theme_minimal() +
-        theme(plot.title = element_text(size = 10))
+        theme_minimal(base_size = 14, base_family = "sans") +
+        theme(
+          plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 10)),
+          axis.text.x = element_text(size = 12, color = "black"),
+          axis.text.y = element_text(size = 12, color = "black"),
+          axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+          axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),
+          axis.line = element_line(color = "black", size = 0.5),
+          panel.grid.major = element_line(color = "gray90", size = 0.3),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.7),
+          legend.position = "right",
+          legend.title = element_text(size = 12, face = "bold"),
+          legend.text = element_text(size = 11),
+          legend.background = element_rect(fill = "white", color = "black", size = 0.3),
+          plot.margin = margin(10, 10, 10, 10)
+        )
       
       # Convert the ggplot to a plotly object
       plotly_plot = ggplotly(plot, tooltip = "text")
@@ -1974,19 +2051,36 @@ satisfaction_dist_sex = function(columns, by = 20) {
   # Interleave distribution plots and frequency tables
   output = columns |>
     map(~ {
-      # Create the distribution plot by age group
-      plot = ggplot(baseline_data_aggregated, aes(y = .data[[.x]], fill = child_sex)) + 
+      # Create the distribution plot by sex
+      plot = ggplot(baseline_data_aggregated, aes(y = .data[[.x]], fill = child_sex)) +
         geom_histogram(aes(x = after_stat(count) / sum(after_stat(count)) * 100,
                            text = paste("Percentage:", after_stat(count) / sum(after_stat(count)) * 100,
                                         "<br>", .x, after_stat(y))),
-                       binwidth = by, position = "dodge", color = "black") +
+                       binwidth = by, position = "dodge", color = "black", size = 0.7, alpha = 0.8) +
         scale_x_continuous(labels = scales::percent_format(scale = 1)) +
-        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(),
-             y = .x,
-             x = "Percentage") +
+        scale_fill_brewer(palette = "Set1") +
+        labs(title = paste("Distribution of", gsub("_", " ", .x)) |> str_wrap(width = 40),
+             y = gsub("_", " ", .x),
+             x = "Percentage",
+             fill = "Sex") +
         coord_flip() +
-        theme_minimal() +
-        theme(plot.title = element_text(size = 10))
+        theme_minimal(base_size = 14, base_family = "sans") +
+        theme(
+          plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 10)),
+          axis.text.x = element_text(size = 12, color = "black"),
+          axis.text.y = element_text(size = 12, color = "black"),
+          axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+          axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),
+          axis.line = element_line(color = "black", size = 0.5),
+          panel.grid.major = element_line(color = "gray90", size = 0.3),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.7),
+          legend.position = "right",
+          legend.title = element_text(size = 12, face = "bold"),
+          legend.text = element_text(size = 11),
+          legend.background = element_rect(fill = "white", color = "black", size = 0.3),
+          plot.margin = margin(10, 10, 10, 10)
+        )
       
       # Convert the ggplot to a plotly object
       plotly_plot = ggplotly(plot, tooltip = "text")
@@ -2148,46 +2242,63 @@ create_distribution_curves <- function(df = comparisons, column_names, group_var
       if (use_groups && fill_by_group) {
         # Filled by group (overlapping densities)
         plot <- ggplot(df, aes_string(x = column_name, fill = group_var)) +
-          geom_density(alpha = 0.5, position = "identity") +
+          geom_density(alpha = 0.6, position = "identity", size = 0.8) +
           scale_fill_brewer(palette = "Set2") +
-          theme_minimal() +
+          theme_minimal(base_size = 14, base_family = "sans") +
           theme(
-            plot.title = element_text(size = 10),
-            axis.text.x = element_text(angle = 45, hjust = 1),
-            axis.title.x = element_text(size = 8),
-            strip.text = element_text(size = 8, face = "bold"),
-            legend.position = ifelse(fill_by_group,"right", "none")
+            plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 10)),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+            axis.text.y = element_text(size = 12, color = "black"),
+            axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+            axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),
+            axis.line = element_line(color = "black", size = 0.5),
+            panel.grid.major = element_line(color = "gray90", size = 0.3),
+            panel.grid.minor = element_blank(),
+            panel.border = element_rect(color = "black", fill = NA, size = 0.7),
+            strip.text = element_text(size = 14, face = "bold"),
+            legend.position = ifelse(fill_by_group, "right", "none"),
+            legend.title = element_text(size = 12, face = "bold"),
+            legend.text = element_text(size = 11),
+            legend.background = element_rect(fill = "white", color = "black", size = 0.3),
+            plot.margin = margin(10, 10, 10, 10)
           )
       } else {
         # No grouping
         plot <- ggplot(df, aes(x = .data[[column_name]])) +
-          geom_density(fill = "lightblue", alpha = 0.5) +
-          theme_minimal() +
+          geom_density(fill = "#4A90E2", alpha = 0.6, size = 0.8) +
+          theme_minimal(base_size = 14, base_family = "sans") +
           theme(
-            plot.title = element_text(size = 10),
-            axis.text.x = element_text(angle = 45, hjust = 1),
-            axis.title.x = element_text(size = 8),
-            strip.text = element_text(size = 8, face = "bold"),
-            legend.position = ifelse(fill_by_group,"right", "none")
+            plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 10)),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+            axis.text.y = element_text(size = 12, color = "black"),
+            axis.title.x = element_text(size = 14, face = "bold", margin = margin(t = 10)),
+            axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 10)),
+            axis.line = element_line(color = "black", size = 0.5),
+            panel.grid.major = element_line(color = "gray90", size = 0.3),
+            panel.grid.minor = element_blank(),
+            panel.border = element_rect(color = "black", fill = NA, size = 0.7),
+            strip.text = element_text(size = 14, face = "bold"),
+            legend.position = ifelse(fill_by_group, "right", "none"),
+            plot.margin = margin(10, 10, 10, 10)
           )
       }
       
       # Add common elements
       plot <- plot +
-        geom_vline(xintercept = 0, color = "red",
-                   linetype = "dashed", linewidth = 1) +
+        geom_vline(xintercept = 0, color = "#D32F2F",
+                   linetype = "dashed", linewidth = 1.2) +
         annotate("text", x = min(df[[column_name]], na.rm = TRUE),
                  y = Inf, label = "DEFICIT",
-                 hjust = 0, vjust = 1.5, color = "red", size = 3, fontface = "bold") +
+                 hjust = 0, vjust = 1.5, color = "#D32F2F", size = 5, fontface = "bold") +
         annotate("text", x = max(df[[column_name]], na.rm = TRUE),
                  y = Inf, label = "SURPLUS",
-                 hjust = 1, vjust = 1.5, color = "blue", size = 3, fontface = "bold") +
-        geom_rug(alpha = 0.2) +
+                 hjust = 1, vjust = 1.5, color = "#1976D2", size = 5, fontface = "bold") +
+        geom_rug(alpha = 0.3, size = 0.5) +
         labs(
           title = paste("Distribution of", gsub("_", " ", column_name)) |>
-            str_wrap(width = 20),
-          x = paste(gsub("_", " ", column_name), "(Negative = Deficit, Positive = Surplus)") |>
-            str_wrap(width = 40),
+            str_wrap(width = 30),
+          x = paste(gsub("_", " ", column_name), "\n(Negative = Deficit, Positive = Surplus)") |>
+            str_wrap(width = 50),
           y = "Density"
         ) 
       
