@@ -500,9 +500,28 @@ baseline_data = baseline_data |>
 ```
 
 
-### where ingredient is fish, Protein corrected for bones' volume 
+### *MANUALLY SETTING % PROTEIN FOR FISH AND MEAT
 
-```{r fish_bones, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+where ingredient is fish, Protein corrected for bones' volume 
+
+```{r fish_bones_2, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+# Get the protein% values to replace with
+
+meat_fish = read_xlsx(here("Corrected Beef and Tilapia values.xlsx")) |>
+  select(participant_id, ingredient_name, food_prep_methos, `CH_corrected_protein_%`) |>
+  mutate(`CH_corrected_protein_%` = 100 * `CH_corrected_protein_%`)
+
+baseline_data_updated <- baseline_data |>
+  left_join(
+    meat_fish,
+    by = c("participant_id", "ingredient_name", "food_prep_methos"),
+    suffix = c("", "_corrected")
+  ) |>
+  mutate(
+    # Update %_Protein with corrected value if available
+    `%_Protein` = coalesce(`CH_corrected_protein_%`, `%_Protein`))
+    
+    
 baseline_data = baseline_data |>
   mutate(
     `Protein (g)` = ifelse(str_detect(ingredient_name_simplified, "tilapia|fish"), `%_Protein` * volume_consumed_new, `Protein (g)`))
@@ -875,12 +894,12 @@ protein_digestibility = protein_digestibility |>
     
   )
 
-protein_digestibility |>
-  # where multiple records exist, take the median
+protein_digestibility = protein_digestibility |>
+  # where multiple records exist, take the max
   group_by(Protein_Source_simplified) |>
   summarise(
     Protein_Source = Protein_Source[1],
-    Protein_digestibility = median(Protein_digestibility, na.rm = TRUE)) |>
+    Protein_digestibility = max(Protein_digestibility, na.rm = TRUE)) |>
   relocate(c(Protein_Source, Protein_Source_simplified, Protein_digestibility), .before = everything()) |>
   ungroup()  |> distinct(Protein_Source_simplified, .keep_all = TRUE)
 ```
@@ -938,7 +957,7 @@ baseline_data = baseline_data |>
 
 # 5. Update merged_data with Protein_digestibility and Protein_Source based on partial matches
 cat("Excluding these ingredients from fuzzy matching (have no match hence prevent error matching):\n")
-excluded_ingredients <- c("soy flour", "oil", "sugar", "tomato", "water", "tea", "baking powder", "curry powder")
+excluded_ingredients <- c("soy flour", "oil", "sugar", "tomato", "water", "tea", "tea black", "baking powder", "curry powder")
 
 
 # Step 1: Split baseline_data into two groups
@@ -956,16 +975,14 @@ merged_data <- baseline_to_match |>
   ) |>
   group_by(participant_id, time, food_item_proc_std, ingredient_name, 
            ingredient_name_simplified_digestibility, food_recipe_name, 
-           volume_calc, `Protein (g)`) |>
+           volume_calc, volume_calc_new, volume_consumed_new, `Protein (g)`) |>
   slice_max(
     calculate_match_score(ingredient_name_simplified_digestibility, Protein_Source_simplified),  
     n = 1,
     with_ties = FALSE
   ) |>
   ungroup() |>
-  full_join(baseline_excluded, by = NULL) |>
-  full_join(
-    baseline_data, by = NULL)
+  full_join(baseline_excluded, by = NULL) 
 
 nrow(merged_data)
 ```
@@ -987,7 +1004,7 @@ merged_data = merged_data |>
     Protein_digestibility = case_when(
       is.na(Protein_digestibility) ~ 1, 
       TRUE ~ Protein_digestibility
-    ))
+    )) 
 ```
 
 ## (d) Ingredients' digestibility
@@ -1322,7 +1339,7 @@ merged_data <- merged_data_to_match |>
   group_by(
     participant_id, time, food_item_proc_std, ingredient_name, 
     ingredient_name_simplified_AA, food_recipe_name, 
-    volume_calc, `Protein (g)`
+    volume_calc, volume_calc_new, volume_consumed_new, `Protein (g)`
   ) |>
   slice_max(
     calculate_match_score(
@@ -1333,9 +1350,7 @@ merged_data <- merged_data_to_match |>
     with_ties = FALSE
   ) |>
   full_join(merged_data_excluded, by = NULL) |>
-  ungroup() |>
-  full_join(
-    baseline_data, by = NULL)
+  ungroup() 
 ```
 
 
@@ -2418,43 +2433,45 @@ browsable(final_output)
 ```
 
 
-# 24. % of people meeting RDA with Amino Acids from Home (Crude and Digestible)
+
 
 ```{r student_indiv_AA_req, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
-columns = c(
-  paste0(AA_list, "_perc_of_RDA"),
-  paste0(AA_list, "_digestible_perc_of_RDA"))
+# 24. % of people meeting RDA with Amino Acids from Home (Crude and Digestible)
 
-students_RDA_AA_met = baseline_data_aggregated |>
-  summarise(
-    across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
-  ungroup() |>
-  t() |> as.data.frame() |> rename(`% student meeting amino acid requirement` = V1)
-students_RDA_AA_met  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement from crude home protein consumption")
-
-# by age group
-students_RDA_AA_met_by_age_group = baseline_data_aggregated |>
-  group_by(age_group) |>
-  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
-  ungroup() |>
-  t() |> as.data.frame() 
-students_RDA_AA_met_by_age_group  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by age group from crude home protein consumption")
-
-# by gender
-students_RDA_AA_met_by_gender = baseline_data_aggregated |>
-  group_by(child_sex) |>
-  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
-  ungroup() |>
-  t() |> as.data.frame() 
-students_RDA_AA_met_by_gender  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by gender from crude home protein consumption")
-
-# by age group and gender
-students_RDA_AA_met_by_age_group_gender = baseline_data_aggregated |>
-  group_by(age_group, child_sex) |>
-  summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
-  ungroup() |>
-  t() |> as.data.frame() 
-students_RDA_AA_met_by_age_group_gender  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by age group and gender from crude home protein consumption")
+# columns = c(
+#   paste0(AA_list, "_perc_of_RDA"),
+#   paste0(AA_list, "_digestible_perc_of_RDA"))
+# 
+# students_RDA_AA_met = baseline_data_aggregated |>
+#   summarise(
+#     across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+#   ungroup() |>
+#   t() |> as.data.frame() |> rename(`% student meeting amino acid requirement` = V1)
+# students_RDA_AA_met  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement from crude home protein consumption")
+# 
+# # by age group
+# students_RDA_AA_met_by_age_group = baseline_data_aggregated |>
+#   group_by(age_group) |>
+#   summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+#   ungroup() |>
+#   t() |> as.data.frame() 
+# students_RDA_AA_met_by_age_group  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by age group from crude home protein consumption")
+# 
+# # by gender
+# students_RDA_AA_met_by_gender = baseline_data_aggregated |>
+#   group_by(child_sex) |>
+#   summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+#   ungroup() |>
+#   t() |> as.data.frame() 
+# students_RDA_AA_met_by_gender  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by gender from crude home protein consumption")
+# 
+# # by age group and gender
+# students_RDA_AA_met_by_age_group_gender = baseline_data_aggregated |>
+#   group_by(age_group, child_sex) |>
+#   summarise(across(contains(columns), ~ mean(. >= 100, na.rm = TRUE) * 100, .names = "{.col}_met")) |> 
+#   ungroup() |>
+#   t() |> as.data.frame() 
+# students_RDA_AA_met_by_age_group_gender  |> mutate(across(where(is.numeric), ~ round(.x, 2))) |> datatable(options = list(pageLength = 20, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  extensions = 'Buttons', caption = "% student meeting amino acid requirement by age group and gender from crude home protein consumption")
 ```
 
 
@@ -2501,17 +2518,19 @@ students_individual_AA_met_by_age_group_gender  |> mutate(across(where(is.numeri
 ```
 
 
-# 26. Average % of RDA covered in home Amino acid consumption 
 
 ```{r amino_acid_req, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
-columns = c(
-  paste0(AA_list, "_perc_of_RDA"),
-  paste0(AA_list, "_digestible_perc_of_RDA"))
+# 26. Average % of RDA covered in home Amino acid consumption 
 
-columns |> satisfaction_dist_pop(by = 10)
-columns |> satisfaction_dist_age(by = 10)
-columns |> satisfaction_dist_sex(by = 10)
-columns |> satisfaction_dist_age_sex(by = 10)
+
+# columns = c(
+#   paste0(AA_list, "_perc_of_RDA"),
+#   paste0(AA_list, "_digestible_perc_of_RDA"))
+# 
+# columns |> satisfaction_dist_pop(by = 10)
+# columns |> satisfaction_dist_age(by = 10)
+# columns |> satisfaction_dist_sex(by = 10)
+# columns |> satisfaction_dist_age_sex(by = 10)
 ```
 
 # 27. Average % of individual requirement covered in home Amino acid consumption 
@@ -2528,96 +2547,94 @@ columns |> satisfaction_dist_age_sex(by = 10)
 ```
 
 
+```{r deficits_plots_9, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
 # 28. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap
 
-
-```{r deficits_plots_9, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
-column_names = c(
-  paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
-  paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
-
-##_____________________________
-p = tagList(
-  tags$div(
-    style = "height:1200px",
-    comparisons |> 
-      create_distribution_curves(
-        column_names = column_names, plot_rows = 5,  height = 1200)))
-browsable(p)
-
-
-# table
-tables = column_names |> freq_fun_pop()
-
-final_output = do.call(tagList, tables)
-browsable(final_output)
+# column_names = c(
+#   paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
+#   paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+# 
+# ##_____________________________
+# p = tagList(
+#   tags$div(
+#     style = "height:1200px",
+#     comparisons |> 
+#       create_distribution_curves(
+#         column_names = column_names, plot_rows = 5,  height = 1200)))
+# browsable(p)
+# 
+# 
+# # table
+# tables = column_names |> freq_fun_pop()
+# 
+# final_output = do.call(tagList, tables)
+# browsable(final_output)
 ```
 
-
-# 29. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by age
 
 
 ```{r deficits_plots_10, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
-column_names = c(
-  paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
-  paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+# 29. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by age
 
-p = tagList(
-  tags$div(
-    style = "height:1200px",
-    comparisons |> 
-      create_distribution_curves(
-        column_names = column_names, plot_rows = 5,  height = 1200,
-        group_var = "age_group", fill_by_group = TRUE)))
-
-browsable(p)
-
-# table
-tables = column_names |> freq_fun_age()
-
-final_output = do.call(tagList, tables)
-browsable(final_output)
+# column_names = c(
+#   paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
+#   paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+# 
+# p = tagList(
+#   tags$div(
+#     style = "height:1200px",
+#     comparisons |> 
+#       create_distribution_curves(
+#         column_names = column_names, plot_rows = 5,  height = 1200,
+#         group_var = "age_group", fill_by_group = TRUE)))
+# 
+# browsable(p)
+# 
+# # table
+# tables = column_names |> freq_fun_age()
+# 
+# final_output = do.call(tagList, tables)
+# browsable(final_output)
 ```
-
-# 30. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by sex
 
 
 ```{r deficits_plots_11, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
-column_names = c(
-  paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
-  paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+# 30. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by sex
 
-p = tagList(
-  tags$div(
-    style = "height:1200px",
-    comparisons |> 
-      create_distribution_curves(
-        column_names = column_names, plot_rows = 5, height = 1200,
-        group_var = "child_sex", fill_by_group = TRUE)))
-browsable(p)
-
-# table
-tables = column_names |> freq_fun_sex()
-
-final_output = do.call(tagList, tables)
-browsable(final_output)
+# column_names = c(
+#   paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
+#   paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+# 
+# p = tagList(
+#   tags$div(
+#     style = "height:1200px",
+#     comparisons |> 
+#       create_distribution_curves(
+#         column_names = column_names, plot_rows = 5, height = 1200,
+#         group_var = "child_sex", fill_by_group = TRUE)))
+# browsable(p)
+# 
+# # table
+# tables = column_names |> freq_fun_sex()
+# 
+# final_output = do.call(tagList, tables)
+# browsable(final_output)
 ```
-
-# 31. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by age and sex
 
 
 ```{r deficits_plots_12, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis'}
-column_names = c(
-  paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
-  paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+# 31. Within the people who have an Amino acid RDA gap at home, average and distribution of the gap by age and sex
 
-# table
-tables = column_names |> freq_fun_age_sex()
-
-final_output = do.call(tagList, tables)
-browsable(final_output)
+# column_names = c(
+#   paste0("total_daily_", AA_list, "_content_crude_RDA_deficit"), 
+#   paste0("total_daily_", AA_list, "_digestible_RDA_deficit"))
+# 
+# # table
+# tables = column_names |> freq_fun_age_sex()
+# 
+# final_output = do.call(tagList, tables)
+# browsable(final_output)
 ```
-
 
 
 # 32. Within the people who have an Individual Amino acid req gap at home, average and distribution of the gap
