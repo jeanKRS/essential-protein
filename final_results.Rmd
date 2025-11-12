@@ -1865,9 +1865,9 @@ satisfaction_dist_pop = function(columns, by = 10) {
       
       # Create frequency table
       freq_table = baseline_data_aggregated |>
-        mutate(Value = cut(.data[[.x]], 
-                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10, 
-                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10, 
+        mutate(Value = cut(.data[[.x]],
+                           breaks = seq(floor(min(.data[[.x]], na.rm = TRUE)/10)*10,
+                                        ceiling(max(.data[[.x]], na.rm = TRUE)/10)*10,
                                         by = by), include.lowest = TRUE)) |>
         group_by(Value) |>
         summarise(n = n()) |> ungroup() |>
@@ -1875,8 +1875,9 @@ satisfaction_dist_pop = function(columns, by = 10) {
           percentage = 100 * n / sum(n, na.rm = TRUE),
           cumulative_percentage = round(cumsum(percentage), 2)) |>
         mutate(across(where(is.numeric), ~ round(.x, 2))) |>
-        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',  
-                  extensions = 'Buttons', 
+        rename(!!.x := Value) |>
+        datatable(options = list(pageLength = 10, scrollX = TRUE, dom = 'Bfrtip'), filter = 'top',
+                  extensions = 'Buttons',
                   caption = paste("Frequency Table for ", gsub("_", " ", .x), " for Population") |> str_wrap())
       
       # Create the distribution plot
