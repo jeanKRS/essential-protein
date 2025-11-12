@@ -43,12 +43,20 @@ original_cols = names(baseline_data)
 baseline_data = baseline_data |>
   mutate(
     child_age = round(child_age, 1),
-    animal_protein_presence = ifelse(stringr::str_detect(ingredient_name, "milk|beef|eggs|fish"), "animal based", "plant based"), # assign protein type i.e milk|beef|eggs|fish as animal and the rest as plant
+    animal_protein_presence = ifelse(stringr::str_detect(ingredient_name, "milk|beef|eggs|fish|tilapia|omena|sardine|chicken drumsticks"), "animal based", "plant based"), # assign protein type i.e milk|beef|eggs|fish as animal and the rest as plant
   )  |>
   distinct() # removed duplicate records from the raw data
 nrow(baseline_data)
 ```
 
+### where ingredient is fish, correct bones' volume by multiplying by 0.33
+
+```{r fish_bones, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+baseline_data = baseline_data |>
+   mutate(
+     volume_calc_new = ifelse(str_detect(ingredient_name, "tilapia|fish"), volume_calc * 0.33, volume_calc),
+     volume_consumed_new = (volume_calc_new * 100))
+```
 
 ## (a) Clean Ingredient Names in Baseline Data
 
@@ -270,20 +278,10 @@ baseline_data = baseline_data |>
     ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "spaghetti"), "spaghetti", ingredient_name_simplified), # replace everything that contains spaghetti to "spaghetti"
     ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "sossi"), "sossi", ingredient_name_simplified), # replace everything that contains sossi to "sossi"
     
-    animal_protein_presence = ifelse(stringr::str_detect(ingredient_name_simplified, "milk|beef|eggs|fish"), "animal based", "plant based"), # assign protein type i.e milk|beef|eggs|fish as animal and the rest as plant
     ingredient_name_simplified = ifelse(stringr::str_detect(ingredient_name_simplified, "water|wate"), "water", ingredient_name_simplified), # replace everything that contains water to "water"
   ) |>
   relocate(ingredient_name, ingredient_name_simplified, .before = everything()) |>
   arrange(ingredient_name_simplified)
-```
-
-### where ingredient is fish, correct bones' volume by multiplying by 0.33
-
-```{r fish_bones, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
-baseline_data = baseline_data |>
-  mutate(
-    volume_calc = ifelse(str_detect(ingredient_name_simplified, "tilapia"), volume_calc * 0.33, volume_calc),
-    volume_consumed = (volume_calc * 100))
 ```
 
 
@@ -347,7 +345,7 @@ There were `r nrow(baseline_data) - nrow(unique_participant_records)` duplicates
 
 # Key mistakes we saw in the Baseline Data
 
-## (a) Outliers in Volume
+## (a) Outliers in Volume (using volumes corrected for bones in fish)
 
 - We check for outliers based on the `total volume of food item` consumed for a participant
 - $volume\_calc = \frac{volume\ of\ ingredient\ in\ grams}{100}$
@@ -359,7 +357,7 @@ There were `r nrow(baseline_data) - nrow(unique_participant_records)` duplicates
 volumes = baseline_data |>
   group_by(participant_id, food_item_proc_std, time) |>
   summarise(
-    total_food_volume = sum(volume_calc * 100)
+    total_food_volume = sum(volume_calc_new * 100)
   ) |> ungroup() |> distinct()
 ```
 
@@ -398,10 +396,10 @@ outlier_points = outlier_points |>
 outlier_points |>
   left_join(
     baseline_data |>
-      select(participant_id, time, ingredient_name, volume_calc) |>
+      select(participant_id, time, ingredient_name, volume_calc, volume_calc_new) |>
       distinct()) |>
-  relocate(ingredient_name, time, volume_calc, .after = food_item_proc_std)  |>
-  arrange(participant_id, food_item_proc_std, time, ingredient_name, volume_calc) |>
+  relocate(ingredient_name, time, volume_calc, volume_calc_new, .after = food_item_proc_std)  |>
+  arrange(participant_id, food_item_proc_std, time, ingredient_name, volume_calc_new) |>
   mutate(across(where(is.numeric), ~ round(.x, 2))) |>
   
   datatable(options = list(pageLength = 15, 
@@ -442,10 +440,10 @@ baseline_data = baseline_data |>
 
 ```{r royco, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
 royco = baseline_data |>
-  filter(str_detect(ingredient_name_simplified, "royco") & volume_consumed > 5)
+  filter(str_detect(ingredient_name_simplified, "royco") & volume_consumed_new > 5)
 
 royco |>
-  select(participant_id, time, food_item_proc_std, ingredient_name, volume_calc, volume_consumed) |>
+  select(participant_id, time, food_item_proc_std, ingredient_name, volume_calc_new, volume_consumed_new) |>
   mutate(across(where(is.numeric), ~ round(.x, 2))) |>
   datatable(options = list(pageLength = 15, 
                            scrollX = TRUE,
@@ -464,10 +462,10 @@ royco |>
 
 ```{r coriander, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
 coriander = baseline_data |>
-  filter(ingredient_name_simplified == "dhania" & volume_consumed > 30)
+  filter(ingredient_name_simplified == "dhania" & volume_consumed_new > 30)
 
 coriander |>
-  select(participant_id, time, food_item_proc_std, ingredient_name, volume_calc, volume_consumed) |>
+  select(participant_id, time, food_item_proc_std, ingredient_name, volume_calc_new, volume_consumed_new) |>
   mutate(across(where(is.numeric), ~ round(.x, 2))) |>
   datatable(options = list(pageLength = 15, 
                            scrollX = TRUE,
@@ -500,6 +498,16 @@ baseline_data = baseline_data |>
     `%_Protein` = (100 * `Protein (g)` / volume_consumed) |> round(2)
   )
 ```
+
+
+### where ingredient is fish, Protein corrected for bones' volume 
+
+```{r fish_bones, message=FALSE, collapse=TRUE,  warning=FALSE, echo=TRUE, results='asis', cache=FALSE}
+baseline_data = baseline_data |>
+  mutate(
+    `Protein (g)` = ifelse(str_detect(ingredient_name_simplified, "tilapia|fish"), `%_Protein` * volume_consumed_new, `Protein (g)`))
+```
+
 
 
 ### Outliers in `%_Protein` (based on both ingredient and food prep method) ( %_Protein < - 1 SD  | %_Protein > 1 SD)
@@ -930,7 +938,7 @@ baseline_data = baseline_data |>
 
 # 5. Update merged_data with Protein_digestibility and Protein_Source based on partial matches
 cat("Excluding these ingredients from fuzzy matching (have no match hence prevent error matching):\n")
-excluded_ingredients <- c("soy flour", "oil", "sugar", "tomato", "water")
+excluded_ingredients <- c("soy flour", "oil", "sugar", "tomato", "water", "tea", "baking powder", "curry powder")
 
 
 # Step 1: Split baseline_data into two groups
@@ -1612,7 +1620,7 @@ baseline_data_aggregated = daily_totals_fun(merged_data = merged_data)
 
 31. *protein_req*: WHO protein requirement in g/kg body weight by age group
 
-32. *Histidine_req*, *Isoleucine_req*, *Leucine_req*, *Lysine_req*, *Methionine_req*, *Phenylalanine_req*, *Threonine_req*, *Tryptophan_req*, *Valine_req*: WHO amino acid requirements in mg/kg body weight by age group
+32. *Histidine_req*, *Isoleucine_req*, *Leucine_req*, *Lysine_req*, *Methionine_req*, *Phenylalanine_req*, *Threonine_req*, *Tryptophan_req*, *Valine_req*: WHO amino acid requirements in mg/kg body weight by age 
 
 33. *has_animal_protein*: Character indicator showing whether participant consumed any animal-based protein. Values: "TRUE" or "FALSE"
 
